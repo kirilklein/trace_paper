@@ -23,8 +23,9 @@ Typical workflow:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import Dict, Optional, Iterable, Literal, Tuple
+from typing import Dict, Optional, Iterable, Literal, Tuple, Sequence
 from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
 
 # ------------------------------------------------------------------------------------
@@ -102,7 +103,8 @@ def prepare_volcano_data(
     outcome_col: str = "outcome",
     adjust: Literal["bh", "bonferroni", "none"] = "bh",
     adjust_per: Literal["by_method", "global"] = "by_method",
-    p_floor: float = 1e-300,
+    p_floor: float = 1e-20,
+    effect_alias: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Prepare data for volcano plotting.
@@ -130,10 +132,17 @@ def prepare_volcano_data(
     p_floor : float, optional
         Minimum p-value for -log10 transformation to avoid inf (default: 1e-300)
 
+    Parameters
+    ----------
+    effect_alias : str, optional
+        Output column name for the effect size. Defaults to `rd_col` ("RD" by
+        default). Useful when plotting alternative measures such as risk ratios.
+
     Returns
     -------
     pd.DataFrame
-        DataFrame with columns: method, outcome, RD, p_value, q_value, neglog10p
+        DataFrame with columns: method, outcome, <effect_alias>, p_value,
+        q_value, neglog10p
     """
     d = df.copy()
 
@@ -148,8 +157,10 @@ def prepare_volcano_data(
     # Robust -log10 p
     d["neglog10p"] = -np.log10(np.clip(d[p_col].values, p_floor, 1.0))
 
+    effect_col = effect_alias if effect_alias is not None else "RD"
+
     return d[[method_col, outcome_col, rd_col, p_col, "q_value", "neglog10p"]].rename(
-        columns={rd_col: "RD", p_col: "p_value"}
+        columns={rd_col: effect_col, p_col: "p_value"}
     )
 
 
@@ -167,6 +178,10 @@ def volcano_plot_per_method(
     point_size: int = 14,
     sig_color: Optional[str] = None,
     ns_color: Optional[str] = None,
+    effect_col: str = "RD",
+    effect_label: str = "Risk difference (RD)",
+    null_value: Optional[float] = 0.0,
+    xscale: Optional[str] = None,
 ) -> Tuple[Figure, list]:
     """
     Create volcano plots with one panel per method.
@@ -199,6 +214,19 @@ def volcano_plot_per_method(
     ns_color : str, optional
         Color for non-significant points (default: None, uses matplotlib default)
 
+    Parameters
+    ----------
+    effect_col : str, optional
+        Column name in `df_volcano` to plot on the x-axis (default: "RD").
+    effect_label : str, optional
+        Axis label for the effect column (default: "Risk difference (RD)").
+    null_value : float, optional
+        Value at which to draw the vertical reference line. Set to None to omit.
+        Defaults to 0.0 (null RD). For risk ratios, pass 1.0.
+    xscale : str, optional
+        Matplotlib scale for the x-axis (e.g., "log", "symlog"). Defaults to
+        None (linear scale).
+
     Returns
     -------
     fig : matplotlib.figure.Figure
@@ -229,7 +257,7 @@ def volcano_plot_per_method(
         d = df_volcano[df_volcano[method_col] == m].copy()
         if d.empty:
             ax.set_title(str(m))
-            ax.set_xlabel("Risk difference (RD)")
+            ax.set_xlabel(effect_label)
             ax.set_ylabel("-log10(p-value)")
             continue
 
@@ -242,7 +270,7 @@ def volcano_plot_per_method(
 
         # Non-significant points
         ax.scatter(
-            d.loc[~sig, "RD"],
+            d.loc[~sig, effect_col],
             d.loc[~sig, "neglog10p"],
             s=point_size,
             alpha=0.7,
@@ -251,7 +279,7 @@ def volcano_plot_per_method(
         )
         # Significant points
         ax.scatter(
-            d.loc[sig, "RD"],
+            d.loc[sig, effect_col],
             d.loc[sig, "neglog10p"],
             s=point_size,
             alpha=0.9,
@@ -261,7 +289,11 @@ def volcano_plot_per_method(
 
         # Guide lines
         ax.axhline(y_thr, linestyle="--", linewidth=1, color="gray", alpha=0.5)
-        ax.axvline(0.0, linestyle="--", linewidth=1, color="gray", alpha=0.5)
+        if null_value is not None:
+            ax.axvline(null_value, linestyle="--", linewidth=1, color="gray", alpha=0.5)
+
+        if xscale:
+            ax.set_xscale(xscale)
 
         # Labels: top hits by -log10 p (limit per panel)
         top = d.sort_values("neglog10p", ascending=False).head(max_labels_per_panel)
@@ -271,14 +303,14 @@ def volcano_plot_per_method(
                 name = label_map[name]
             ax.annotate(
                 name,
-                (r["RD"], r["neglog10p"]),
+                (r[effect_col], r["neglog10p"]),
                 xytext=(3, 3),
                 textcoords="offset points",
                 fontsize=9,
             )
 
         ax.set_title(str(m))
-        ax.set_xlabel("Risk difference (RD)")
+        ax.set_xlabel(effect_label)
         ax.grid(alpha=0.2, linestyle=":", linewidth=0.8)
 
     axes[0].set_ylabel("-log10(p-value)")
@@ -287,3 +319,140 @@ def volcano_plot_per_method(
         fig.legend(handles, labels, loc="upper right")
     fig.tight_layout()
     return fig, axes
+
+
+def volcano_overlay_methods(
+    df_volcano: pd.DataFrame,
+    methods: Sequence[str] = ("TMLE", "IPW"),
+    method_col: str = "method",
+    outcome_col: str = "outcome",
+    effect_col: str = "RD",
+    effect_label: str = "Risk difference (RD)",
+    y_col: str = "neglog10p",
+    significance_col: str = "q_value",
+    alpha: float = 0.05,
+    figsize: Tuple[float, float] = (8, 6),
+    point_size: int = 50,
+    colors: Optional[Dict[str, str]] = None,
+    markers: Optional[Dict[str, str]] = None,
+    line_color: str = "#6c757d",
+    line_alpha: float = 0.5,
+    line_width: float = 1.0,
+    label_map: Optional[Dict[str, str]] = None,
+    annotate_top_n: int = 0,
+) -> Tuple[Figure, Axes]:
+    """Overlay two methods (default: TMLE and IPW) on one volcano panel.
+
+    Draws scatter points for each method and connects paired outcomes that have
+    estimates from both methods. Optionally annotates the largest effect size
+    discrepancies.
+
+    Returns the Matplotlib figure and axis for further customization or saving.
+    """
+
+    if len(methods) != 2:
+        raise ValueError("volcano_overlay_methods expects exactly two methods.")
+
+    method_a, method_b = methods
+
+    subset = df_volcano[df_volcano[method_col].isin(methods)].copy()
+    if subset.empty:
+        raise ValueError(
+            "No rows found for the requested methods in the volcano dataframe."
+        )
+
+    paired_outcomes = subset.groupby(outcome_col)[method_col].nunique().eq(len(methods))
+    paired_outcomes = paired_outcomes[paired_outcomes].index
+
+    paired_df = subset[subset[outcome_col].isin(paired_outcomes)].copy()
+    if paired_df.empty:
+        raise ValueError(
+            "No outcomes contain both methods; cannot draw overlay comparison."
+        )
+
+    cmap = plt.get_cmap("tab10")
+    default_colors = {
+        method_a: cmap(0),
+        method_b: cmap(1),
+    }
+    if colors:
+        default_colors.update(colors)
+
+    default_markers = {method_a: "o", method_b: "s"}
+    if markers:
+        default_markers.update(markers)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for idx, method in enumerate(methods):
+        d = subset[subset[method_col] == method]
+        if d.empty:
+            continue
+        ax.scatter(
+            d[effect_col],
+            d[y_col],
+            s=point_size,
+            label=method,
+            color=default_colors.get(method),
+            marker=default_markers.get(method, "o"),
+            alpha=0.85,
+            edgecolor="white",
+            linewidth=0.6,
+            zorder=3 + idx,
+        )
+
+    for outcome, group in paired_df.groupby(outcome_col):
+        group = group.set_index(method_col)
+        if not all(m in group.index for m in methods):
+            continue
+        xs = [group.loc[method_a, effect_col], group.loc[method_b, effect_col]]
+        ys = [group.loc[method_a, y_col], group.loc[method_b, y_col]]
+        ax.plot(
+            xs,
+            ys,
+            color=line_color,
+            alpha=line_alpha,
+            linewidth=line_width,
+            zorder=2,
+        )
+
+    if annotate_top_n > 0:
+        diffs = []
+        for outcome, group in paired_df.groupby(outcome_col):
+            group = group.set_index(method_col)
+            if not all(m in group.index for m in methods):
+                continue
+            diff = abs(
+                group.loc[method_a, effect_col] - group.loc[method_b, effect_col]
+            )
+            diffs.append((diff, outcome, group))
+        diffs.sort(reverse=True, key=lambda x: x[0])
+        for _, outcome, group in diffs[:annotate_top_n]:
+            xs = [group.loc[method_a, effect_col], group.loc[method_b, effect_col]]
+            ys = [group.loc[method_a, y_col], group.loc[method_b, y_col]]
+            label = outcome
+            if label_map and label in label_map:
+                label = label_map[label]
+            ax.annotate(
+                label,
+                xy=(np.mean(xs), np.mean(ys)),
+                xytext=(4, 4),
+                textcoords="offset points",
+                fontsize=9,
+                ha="left",
+            )
+
+    y_label = "-log10(p-value)" if y_col == "neglog10p" else y_col
+    ax.set_xlabel(effect_label)
+    ax.set_ylabel(y_label)
+
+    if significance_col in df_volcano.columns:
+        y_thr = -np.log10(alpha)
+        ax.axhline(y_thr, linestyle="--", linewidth=1, color="gray", alpha=0.5)
+
+    ax.axvline(0.0, linestyle="--", linewidth=1, color="gray", alpha=0.5)
+    ax.grid(alpha=0.2, linestyle=":", linewidth=0.8)
+    ax.legend(title="Method")
+    fig.tight_layout()
+
+    return fig, ax

@@ -375,6 +375,100 @@ def rd_inference_from_arm_logits(
 
 
 # -----------------------------
+# Risk ratio inference
+# -----------------------------
+def rr_inference_from_arm_logits(
+    eta1: np.ndarray,
+    se1: np.ndarray,
+    eta0: np.ndarray,
+    se0: np.ndarray,
+    z_crit: float = 1.96,
+    verbose: bool = False,
+) -> Dict[str, np.ndarray]:
+    """
+    Compute risk ratio inference from arm logits using the delta method.
+
+    Parameters
+    ----------
+    eta1, se1 : np.ndarray
+        Logit estimates and standard errors for the treatment arm.
+    eta0, se0 : np.ndarray
+        Logit estimates and standard errors for the control arm.
+    z_crit : float, optional
+        Critical value for confidence intervals (default: 1.96 for 95% CI).
+    verbose : bool, optional
+        If True, emit diagnostic information for extreme values.
+
+    Returns
+    -------
+    dict
+        Keys include:
+        - RR: risk ratio on the probability scale (p1 / p0)
+        - log_RR: natural log of the risk ratio
+        - SE_log_RR: standard error of log_RR
+        - SE_RR: delta-method SE of RR
+        - z: Wald z-statistic for log_RR (null hypothesis log_RR = 0)
+        - p_value: two-sided p-value
+        - log_RR_CI95_lower / log_RR_CI95_upper: confidence interval bounds on log scale
+        - RR_CI95_lower / RR_CI95_upper: confidence interval bounds on RR scale
+        - p1_hat / p0_hat: probabilities for each arm
+    """
+
+    p1 = inv_logit(eta1)
+    p0 = inv_logit(eta0)
+
+    if verbose:
+        n_extreme = np.sum((p1 < 1e-4) | (p0 < 1e-4))
+        if n_extreme > 0:
+            print(
+                f"  [RR] Very small probabilities detected (p < 1e-4) in {n_extreme} rows."
+            )
+
+    # Log risk ratio and its variance via delta method
+    log_rr = np.log(p1) - np.log(p0)
+    d_log_rr_d_eta1 = 1 - p1
+    d_log_rr_d_eta0 = -(1 - p0)
+
+    var_log_rr = (d_log_rr_d_eta1**2) * (se1**2) + (d_log_rr_d_eta0**2) * (se0**2)
+    se_log_rr = np.sqrt(var_log_rr)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rr = np.exp(log_rr)
+        se_rr = rr * se_log_rr
+
+    # Handle potential zero standard errors gracefully
+    z = np.divide(
+        log_rr, se_log_rr, out=np.full_like(log_rr, np.nan), where=se_log_rr > 0
+    )
+    pval = 2 * (1 - norm.cdf(np.abs(z)))
+
+    log_rr_lo = log_rr - z_crit * se_log_rr
+    log_rr_hi = log_rr + z_crit * se_log_rr
+    rr_lo = np.exp(log_rr_lo)
+    rr_hi = np.exp(log_rr_hi)
+
+    if verbose:
+        n_tiny_se = np.sum(se_log_rr < 1e-6)
+        if n_tiny_se > 0:
+            print(f"  [RR] Very small SE_log_RR < 1e-6: {n_tiny_se}")
+
+    return {
+        "RR": rr,
+        "log_RR": log_rr,
+        "SE_log_RR": se_log_rr,
+        "SE_RR": se_rr,
+        "z": z,
+        "p_value": pval,
+        "log_RR_CI95_lower": log_rr_lo,
+        "log_RR_CI95_upper": log_rr_hi,
+        "RR_CI95_lower": rr_lo,
+        "RR_CI95_upper": rr_hi,
+        "p1_hat": p1,
+        "p0_hat": p0,
+    }
+
+
+# -----------------------------
 # Orchestrator
 # -----------------------------
 def compute_rd_pvalues(
@@ -564,6 +658,86 @@ def compute_rd_pvalues(
     return pooled
 
 
+# -----------------------------
+# Risk ratio orchestrator
+# -----------------------------
+def compute_rr_from_arm_estimates(
+    df: pd.DataFrame,
+    group_cols: Optional[Union[str, List[str]]] = None,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """
+    Compute risk ratio (RR) statistics from arm-level probability estimates.
+
+    The workflow mirrors ``compute_rd_pvalues`` but produces risk ratio metrics,
+    including log risk ratios, standard errors, and Wald-based inference.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input data with columns required by ``add_logit_arm_metrics`` (effect_1,
+        effect_0, and their 95% CIs) plus optional grouping columns.
+    group_cols : str or list of str, optional
+        Columns used to aggregate runs before computing risk ratios. If None,
+        the computation is done per input row.
+    verbose : bool, optional
+        If True, emit diagnostic information during the calculation.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the original columns plus risk ratio metrics.
+    """
+
+    dfl = add_logit_arm_metrics(df)
+
+    if verbose:
+        print(
+            "  [RR] After logit transformation: se_eta1 min/median/max = "
+            f"{dfl['se_eta1'].min():.2e} / {dfl['se_eta1'].median():.2e} / {dfl['se_eta1'].max():.2e}"
+        )
+        print(
+            "  [RR] After logit transformation: se_eta0 min/median/max = "
+            f"{dfl['se_eta0'].min():.2e} / {dfl['se_eta0'].median():.2e} / {dfl['se_eta0'].max():.2e}"
+        )
+
+    if not group_cols:
+        if verbose:
+            print("  [RR] Computing per-row risk ratios...")
+        res = rr_inference_from_arm_logits(
+            eta1=dfl["eta1"].values,
+            se1=dfl["se_eta1"].values,
+            eta0=dfl["eta0"].values,
+            se0=dfl["se_eta0"].values,
+            verbose=verbose,
+        )
+        out = dfl.copy()
+        for k, v in res.items():
+            out[k] = v
+        return out
+
+    if verbose:
+        print(f"  [RR] Pooling arm logits over groups: {group_cols}")
+
+    arm1 = pool_arm_logits(dfl, group_cols, "eta1", "se_eta1", "eta1_pooled")
+    arm0 = pool_arm_logits(dfl, group_cols, "eta0", "se_eta0", "eta0_pooled")
+
+    pooled = pd.merge(arm1, arm0, on=group_cols, how="inner")
+
+    res = rr_inference_from_arm_logits(
+        eta1=pooled["eta1_pooled"].values,
+        se1=pooled["eta1_pooled_se"].values,
+        eta0=pooled["eta0_pooled"].values,
+        se0=pooled["eta0_pooled_se"].values,
+        verbose=verbose,
+    )
+
+    for k, v in res.items():
+        pooled[k] = v
+
+    return pooled
+
+
 # Import tdist for Rubin's rules
 from scipy.stats import t as tdist
 
@@ -699,6 +873,63 @@ def combine_rubins_rules(
         df.groupby(list(group_cols), as_index=False).apply(_agg).reset_index(drop=True)
     )
     return out
+
+
+def combine_rr_random_effects_HKSJ(
+    df: pd.DataFrame,
+    group_cols=("method", "outcome"),
+    ci: float = 0.95,
+) -> pd.DataFrame:
+    """
+    Random-effects meta-analysis of log risk ratios using HKSJ adjustment.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain columns ``log_RR`` and ``SE_log_RR`` in addition to the
+        grouping columns.
+    group_cols : tuple/list of str, optional
+        Columns to group by when pooling (default: ("method", "outcome")).
+    ci : float, optional
+        Confidence level for the output intervals (default: 0.95).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with log- and probability-scale risk ratio summaries.
+    """
+
+    required = set(group_cols) | {"log_RR", "SE_log_RR"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            "combine_rr_random_effects_HKSJ missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    rr_pool = (
+        df[list(group_cols) + ["log_RR", "SE_log_RR"]]
+        .rename(columns={"log_RR": "RD", "SE_log_RR": "SE_RD"})
+        .copy()
+    )
+
+    combined = combine_random_effects_HKSJ(rr_pool, group_cols=group_cols, ci=ci)
+
+    combined = combined.rename(
+        columns={
+            "RD": "log_RR",
+            "SE_RD": "SE_log_RR",
+            "RD_CI95_lower": "log_RR_CI95_lower",
+            "RD_CI95_upper": "log_RR_CI95_upper",
+        }
+    )
+
+    combined["RR"] = np.exp(combined["log_RR"])
+    combined["SE_RR"] = combined["RR"] * combined["SE_log_RR"]
+    combined["RR_CI95_lower"] = np.exp(combined["log_RR_CI95_lower"])
+    combined["RR_CI95_upper"] = np.exp(combined["log_RR_CI95_upper"])
+
+    return combined
 
 
 # -----------------------------
