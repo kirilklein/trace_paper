@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -218,6 +218,117 @@ def build_plotly_volcano(
     return fig
 
 
+def build_plotly_overlay_methods(
+    df: pd.DataFrame,
+    *,
+    methods: Sequence[str] = ("TMLE", "IPW"),
+    method_col: str = "method",
+    outcome_col: str = "outcome",
+    rd_col: str = "RD",
+    neglog_col: str = "neglog10p",
+    alpha: float = 0.05,
+    marker_size: int = 9,
+    line_color: str = "rgba(108,117,125,0.6)",
+    line_width: float = 1.2,
+    label_map: Mapping[str, str] | None = None,
+) -> go.Figure:
+    """Build an interactive overlay comparing two methods on one volcano plot."""
+
+    if len(methods) != 2:
+        raise ValueError("build_plotly_overlay_methods expects exactly two methods.")
+
+    subset = df[df[method_col].isin(methods)].copy()
+    if subset.empty:
+        raise ValueError(
+            "No rows found for the requested methods in the volcano dataframe."
+        )
+
+    if label_map:
+        subset["outcome_label"] = subset[outcome_col].map(label_map)
+
+    subset["hover_text"] = subset.apply(
+        _build_hover_text, axis=1, method_col=method_col, outcome_col=outcome_col
+    )
+
+    paired_outcomes = (
+        subset.groupby(outcome_col)[method_col].nunique().eq(len(methods))
+    )
+    paired_outcomes = paired_outcomes[paired_outcomes].index
+
+    paired = subset[subset[outcome_col].isin(paired_outcomes)].copy()
+    if paired.empty:
+        raise ValueError("No outcomes contain both methods; overlay not created.")
+
+    line_x: list[float | None] = []
+    line_y: list[float | None] = []
+    for _, group in paired.groupby(outcome_col):
+        group = group.set_index(method_col)
+        if not all(m in group.index for m in methods):
+            continue
+        line_x.extend([
+            group.loc[methods[0], rd_col],
+            group.loc[methods[1], rd_col],
+            None,
+        ])
+        line_y.extend([
+            group.loc[methods[0], neglog_col],
+            group.loc[methods[1], neglog_col],
+            None,
+        ])
+
+    fig = go.Figure()
+
+    if line_x and line_y:
+        fig.add_trace(
+            go.Scatter(
+                x=line_x,
+                y=line_y,
+                mode="lines",
+                line=dict(color=line_color, width=line_width),
+                hoverinfo="skip",
+                name="Method difference",
+                showlegend=False,
+            )
+        )
+
+    for method in methods:
+        method_subset = subset[subset[method_col] == method]
+        if method_subset.empty:
+            continue
+
+        fig.add_trace(
+            go.Scatter(
+                x=method_subset[rd_col],
+                y=method_subset[neglog_col],
+                mode="markers",
+                marker=dict(size=marker_size),
+                name=method,
+                hovertext=method_subset["hover_text"],
+                hovertemplate="%{hovertext}<extra></extra>",
+            )
+        )
+
+    fig.add_hline(
+        y=-np.log10(alpha),
+        line=dict(color="rgba(120,120,120,0.4)", dash="dash"),
+    )
+    fig.add_vline(
+        x=0.0,
+        line=dict(color="rgba(120,120,120,0.4)", dash="dash"),
+    )
+
+    fig.update_xaxes(title_text="Risk difference (RD)")
+    fig.update_yaxes(title_text="-log10(p-value)")
+    fig.update_layout(
+        template="plotly_white",
+        legend_title_text="Method",
+        hoverlabel=dict(bgcolor="white", font_color="#222"),
+        margin=dict(l=70, r=40, t=60, b=60),
+    )
+
+    return fig
+
+
 def save_plotly_figure(
     fig: go.Figure,
     *,
@@ -245,4 +356,8 @@ def save_plotly_figure(
             )
 
 
-__all__ = ["build_plotly_volcano", "save_plotly_figure"]
+__all__ = [
+    "build_plotly_volcano",
+    "build_plotly_overlay_methods",
+    "save_plotly_figure",
+]
