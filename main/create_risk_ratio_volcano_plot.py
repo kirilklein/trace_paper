@@ -22,6 +22,7 @@ from trace.io import (
     load_prevalence_statistics,
 )
 from trace.plotting.volcano import prepare_volcano_data, volcano_plot_per_method
+from trace.plotting.volcano_plotly import build_plotly_volcano, save_plotly_figure
 from trace.statistics import (
     combine_rr_random_effects_HKSJ,
     compute_rr_from_arm_estimates,
@@ -149,6 +150,24 @@ def main() -> None:
     print(f"Saved plot to: {output_path_pdf}")
 
     plt.show()
+
+    print("\nCreating interactive risk-ratio volcano plot...")
+    plotly_fig = build_plotly_volcano(
+        df_volcano_enriched,
+        alpha=MATPLOTLIB_ALPHA,
+        method_col="method",
+        outcome_col="outcome",
+        effect_col="RR",
+        effect_label="Risk ratio (RR)",
+        null_value=1.0,
+        xscale="log",
+    )
+
+    plotly_html = FIGURES_DIR / "volcano_plot_rr_interactive.html"
+    plotly_png = FIGURES_DIR / "volcano_plot_rr_interactive.png"
+    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=plotly_png)
+    print(f"Saved interactive plot to: {plotly_html}")
+    print(f"Saved interactive snapshot to: {plotly_png}")
 
     print("\nDone!")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, Optional
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,14 @@ def _format_count_pair(events: float | int | None, total: float | int | None) ->
         return "NA"
 
 
-def _build_hover_text(row: pd.Series, *, method_col: str, outcome_col: str) -> str:
+def _build_hover_text(
+    row: pd.Series,
+    *,
+    method_col: str,
+    outcome_col: str,
+    effect_col: str,
+    effect_label: str,
+) -> str:
     label = row.get("outcome_label")
     if pd.isna(label):
         label = row.get(outcome_col)
@@ -58,30 +65,56 @@ def _build_hover_text(row: pd.Series, *, method_col: str, outcome_col: str) -> s
     if pd.notna(method_value):
         lines.append(f"Method: {method_value}")
 
-    lines.append(f"RD: {_format_float(row.get('RD'), '{:.4f}')}")
-    lines.append(f"SE_RD: {_format_float(row.get('SE_RD'), '{:.2e}')}")
+    effect_value = row.get(effect_col)
+    lines.append(f"{effect_label}: {_format_float(effect_value, '{:.4f}')}")
+
+    se_candidates = [f"SE_{effect_col}", "SE_RD", "SE_RR", "SE_log_RR"]
+    for se_col in se_candidates:
+        if se_col in row:
+            lines.append(f"{se_col}: {_format_float(row.get(se_col), '{:.2e}')}")
+            break
     lines.append(f"z: {_format_float(row.get('z'), '{:.2f}')}")
     lines.append(f"p-value: {_format_float(row.get('p_value'), '{:.2e}')}")
     lines.append(f"q-value: {_format_float(row.get('q_value'), '{:.2e}')}")
 
-    if pd.notna(row.get("RD_CI95_lower")) and pd.notna(row.get("RD_CI95_upper")):
-        ci_low = _format_float(row.get("RD_CI95_lower"), "{:.4f}")
-        ci_high = _format_float(row.get("RD_CI95_upper"), "{:.4f}")
-        lines.append(f"95% CI: [{ci_low}, {ci_high}]")
+    ci_candidates = [
+        (f"{effect_col}_CI95_lower", f"{effect_col}_CI95_upper"),
+        ("RD_CI95_lower", "RD_CI95_upper"),
+        ("RR_CI95_lower", "RR_CI95_upper"),
+    ]
+    for lo_col, hi_col in ci_candidates:
+        if pd.notna(row.get(lo_col)) and pd.notna(row.get(hi_col)):
+            ci_low = _format_float(row.get(lo_col), "{:.4f}")
+            ci_high = _format_float(row.get(hi_col), "{:.4f}")
+            lines.append(f"95% CI: [{ci_low}, {ci_high}]")
+            break
 
     if pd.notna(row.get("tau2")):
         lines.append(f"tau²: {_format_float(row.get('tau2'), '{:.2e}')}")
 
     if pd.notna(row.get("per_run_n_runs")):
         lines.append(f"Runs (per method): {int(row['per_run_n_runs'])}")
-        lines.append(
-            f"RD range (runs): {_format_float(row.get('per_run_rd_min'), '{:.4f}')} – "
-            f"{_format_float(row.get('per_run_rd_max'), '{:.4f}')}"
+        prefix = effect_col.lower()
+        range_cols = (
+            f"per_run_{prefix}_min",
+            f"per_run_{prefix}_max",
         )
-        lines.append(
-            f"RD mean ± sd (runs): {_format_float(row.get('per_run_rd_mean'), '{:.4f}')} "
-            f"± {_format_float(row.get('per_run_rd_std'), '{:.4f}')}"
+        mean_cols = (
+            f"per_run_{prefix}_mean",
+            f"per_run_{prefix}_std",
         )
+        if all(col in row for col in range_cols):
+            lines.append(
+                f"{effect_label} range (runs): "
+                f"{_format_float(row.get(range_cols[0]), '{:.4f}')} – "
+                f"{_format_float(row.get(range_cols[1]), '{:.4f}')}"
+            )
+        if all(col in row for col in mean_cols):
+            lines.append(
+                f"{effect_label} mean ± sd (runs): "
+                f"{_format_float(row.get(mean_cols[0]), '{:.4f}')} ± "
+                f"{_format_float(row.get(mean_cols[1]), '{:.4f}')}"
+            )
         lines.append(
             f"Arm1 mean ± sd: {_format_float(row.get('per_run_effect1_mean'), '{:.4f}')} "
             f"± {_format_float(row.get('per_run_effect1_std'), '{:.4f}')}"
@@ -130,10 +163,13 @@ def build_plotly_volcano(
     alpha: float = 0.05,
     method_col: str = "method",
     outcome_col: str = "outcome",
-    rd_col: str = "RD",
+    effect_col: str = "RD",
+    effect_label: str = "Risk difference (RD)",
     neglog_col: str = "neglog10p",
     colors: Mapping[str, str] | None = None,
     point_size: int = 12,
+    null_value: Optional[float] = 0.0,
+    xscale: Optional[str] = None,
 ) -> go.Figure:
     """Build an interactive volcano plot with Plotly."""
 
@@ -149,7 +185,12 @@ def build_plotly_volcano(
         data["q_value"] < alpha, "Significant", "Not significant"
     )
     data["hover_text"] = data.apply(
-        _build_hover_text, axis=1, method_col=method_col, outcome_col=outcome_col
+        _build_hover_text,
+        axis=1,
+        method_col=method_col,
+        outcome_col=outcome_col,
+        effect_col=effect_col,
+        effect_label=effect_label,
     )
 
     methods = list(dict.fromkeys(data[method_col]))
@@ -177,7 +218,7 @@ def build_plotly_volcano(
 
             fig.add_trace(
                 go.Scatter(
-                    x=method_subset[rd_col],
+                    x=method_subset[effect_col],
                     y=method_subset[neglog_col],
                     mode="markers",
                     marker=dict(color=marker_color, size=point_size, opacity=0.9),
@@ -197,15 +238,18 @@ def build_plotly_volcano(
             row=1,
             col=col_idx,
         )
-        fig.add_vline(
-            x=0.0,
-            line=dict(color="rgba(120,120,120,0.5)", dash="dash"),
-            row=1,
-            col=col_idx,
-        )
+        if null_value is not None:
+            fig.add_vline(
+                x=null_value,
+                line=dict(color="rgba(120,120,120,0.5)", dash="dash"),
+                row=1,
+                col=col_idx,
+            )
 
     for col_idx in range(1, n_methods + 1):
-        fig.update_xaxes(title_text="Risk difference (RD)", row=1, col=col_idx)
+        fig.update_xaxes(title_text=effect_label, row=1, col=col_idx)
+        if xscale == "log":
+            fig.update_xaxes(type="log", row=1, col=col_idx)
     fig.update_yaxes(title_text="-log10(p-value)", row=1, col=1)
 
     fig.update_layout(
@@ -224,13 +268,16 @@ def build_plotly_overlay_methods(
     methods: Sequence[str] = ("TMLE", "IPW"),
     method_col: str = "method",
     outcome_col: str = "outcome",
-    rd_col: str = "RD",
+    effect_col: str = "RD",
+    effect_label: str = "Risk difference (RD)",
     neglog_col: str = "neglog10p",
     alpha: float = 0.05,
     marker_size: int = 9,
     line_color: str = "rgba(108,117,125,0.6)",
     line_width: float = 1.2,
     label_map: Mapping[str, str] | None = None,
+    null_value: Optional[float] = 0.0,
+    xscale: Optional[str] = None,
 ) -> go.Figure:
     """Build an interactive overlay comparing two methods on one volcano plot."""
 
@@ -247,7 +294,12 @@ def build_plotly_overlay_methods(
         subset["outcome_label"] = subset[outcome_col].map(label_map)
 
     subset["hover_text"] = subset.apply(
-        _build_hover_text, axis=1, method_col=method_col, outcome_col=outcome_col
+        _build_hover_text,
+        axis=1,
+        method_col=method_col,
+        outcome_col=outcome_col,
+        effect_col=effect_col,
+        effect_label=effect_label,
     )
 
     paired_outcomes = subset.groupby(outcome_col)[method_col].nunique().eq(len(methods))
@@ -265,8 +317,8 @@ def build_plotly_overlay_methods(
             continue
         line_x.extend(
             [
-                group.loc[methods[0], rd_col],
-                group.loc[methods[1], rd_col],
+                group.loc[methods[0], effect_col],
+                group.loc[methods[1], effect_col],
                 None,
             ]
         )
@@ -300,7 +352,7 @@ def build_plotly_overlay_methods(
 
         fig.add_trace(
             go.Scatter(
-                x=method_subset[rd_col],
+                x=method_subset[effect_col],
                 y=method_subset[neglog_col],
                 mode="markers",
                 marker=dict(size=marker_size),
@@ -314,12 +366,15 @@ def build_plotly_overlay_methods(
         y=-np.log10(alpha),
         line=dict(color="rgba(120,120,120,0.4)", dash="dash"),
     )
-    fig.add_vline(
-        x=0.0,
-        line=dict(color="rgba(120,120,120,0.4)", dash="dash"),
-    )
+    if null_value is not None:
+        fig.add_vline(
+            x=null_value,
+            line=dict(color="rgba(120,120,120,0.4)", dash="dash"),
+        )
 
-    fig.update_xaxes(title_text="Risk difference (RD)")
+    fig.update_xaxes(title_text=effect_label)
+    if xscale == "log":
+        fig.update_xaxes(type="log")
     fig.update_yaxes(title_text="-log10(p-value)")
     fig.update_layout(
         template="plotly_white",
