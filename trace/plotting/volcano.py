@@ -332,7 +332,7 @@ def volcano_overlay_methods(
     significance_col: str = "q_value",
     alpha: float = 0.05,
     figsize: Tuple[float, float] = (8, 6),
-    point_size: int = 50,
+    point_size: int = 30,
     colors: Optional[Dict[str, str]] = None,
     markers: Optional[Dict[str, str]] = None,
     line_color: str = "#6c757d",
