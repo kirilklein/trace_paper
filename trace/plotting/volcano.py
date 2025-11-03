@@ -25,7 +25,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, Optional, Iterable, Literal, Tuple
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
 
 
 # ------------------------------------------------------------------------------------

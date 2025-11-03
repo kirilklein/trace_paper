@@ -21,8 +21,8 @@ Typical workflow:
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 from typing import Dict, List, Optional, Union
+from scipy.stats import t as tdist, norm
 
 # -----------------------------
 # Column configuration
@@ -814,6 +814,150 @@ def combine_random_effects_DL(
                 RD_CI95_upper=theta_RE + zcrit * se_RE,
                 m_runs=k,
                 method_used="DL_RE",
+            )
+        )
+
+    out = (
+        df.groupby(list(group_cols), as_index=False).apply(_agg).reset_index(drop=True)
+    )
+    return out
+
+
+def combine_random_effects_HKSJ(
+    df: pd.DataFrame,
+    group_cols=("method", "outcome"),
+    ci: float = 0.95,
+) -> pd.DataFrame:
+    """
+    Random-effects meta-analysis of RD with Hartung–Knapp–Sidik–Jonkman (HKSJ) adjustment.
+
+    Expects per-run risk differences (RD) and their within-run variances (SE_RD^2).
+    For each group (e.g., per method/outcome), it:
+      1) Estimates between-run heterogeneity tau^2 using DerSimonian–Laird (DL).
+      2) Pools with weights w*_r = 1 / (SE_r^2 + tau^2).
+      3) Uses HKSJ small-sample adjustment for SE and t-based inference with df = m-1.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain: RD, SE_RD, and the columns in `group_cols`.
+    group_cols : tuple/list of str
+        Columns to group by when pooling (default: ("method", "outcome")).
+    ci : float
+        Confidence level for intervals (default: 0.95).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per group with columns:
+        - RD: pooled risk difference (random effects)
+        - SE_RD: HKSJ-adjusted standard error
+        - z: normal-approx z-statistic (NaN if undefined)
+        - t: t-statistic (NaN if m < 2)
+        - p_value: two-sided p-value (t with df=m-1 if m>=2; normal if m<2)
+        - RD_CI95_lower / RD_CI95_upper: CI bounds at the requested level
+        - tau2: between-run heterogeneity (DL)
+        - I2: percent variance due to heterogeneity
+        - m_runs: number of runs pooled
+        - df: degrees of freedom (m-1 if m>=2 else NaN)
+        - method_used: "DL_RE_HKSJ"
+    """
+    alpha = 1.0 - ci
+
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        yi = g["RD"].astype(float).values
+        vi = (g["SE_RD"].astype(float).values) ** 2
+        m = len(yi)
+
+        # If only one run: fall back to that run's estimate (z-approx)
+        if m == 0:
+            return pd.Series(
+                dict(
+                    RD=np.nan,
+                    SE_RD=np.nan,
+                    z=np.nan,
+                    t=np.nan,
+                    p_value=np.nan,
+                    RD_CI95_lower=np.nan,
+                    RD_CI95_upper=np.nan,
+                    tau2=np.nan,
+                    I2=np.nan,
+                    m_runs=0,
+                    df=np.nan,
+                    method_used="DL_RE_HKSJ",
+                )
+            )
+        if m == 1:
+            theta = yi[0]
+            se = np.sqrt(vi[0])
+            z = theta / se if se > 0 else np.nan
+            p = 2 * (1 - norm.cdf(abs(z))) if np.isfinite(z) else np.nan
+            zcrit = norm.ppf(1 - alpha / 2)
+            lo, hi = theta - zcrit * se, theta + zcrit * se
+            return pd.Series(
+                dict(
+                    RD=theta,
+                    SE_RD=se,
+                    z=z,
+                    t=np.nan,
+                    p_value=p,
+                    RD_CI95_lower=lo,
+                    RD_CI95_upper=hi,
+                    tau2=0.0,
+                    I2=0.0,
+                    m_runs=1,
+                    df=np.nan,
+                    method_used="DL_RE_HKSJ",
+                )
+            )
+
+        # Fixed-effect quantities (for Q and DL tau^2)
+        wi = 1.0 / vi
+        theta_FE = np.sum(wi * yi) / np.sum(wi)
+        Q = np.sum(wi * (yi - theta_FE) ** 2)
+        df_Q = m - 1
+        c = np.sum(wi) - (np.sum(wi**2) / np.sum(wi))
+        tau2 = max((Q - df_Q) / c, 0.0) if c > 0 else 0.0
+
+        # Random-effects weights
+        w_star = 1.0 / (vi + tau2)
+        theta_RE = np.sum(w_star * yi) / np.sum(w_star)
+
+        # HKSJ variance: se_HK^2 = sum(w*_r (y_r - theta_RE)^2) / ((m-1) * sum(w*_r))
+        num = np.sum(w_star * (yi - theta_RE) ** 2)
+        den = (m - 1) * np.sum(w_star)
+        if den > 0:
+            se_HK = np.sqrt(num / den)
+        else:
+            # fallback to classic RE SE if degenerate
+            se_HK = np.sqrt(1.0 / np.sum(w_star))
+
+        # t-based inference with df = m-1
+        df_hk = m - 1
+        tcrit = tdist.ppf(1 - alpha / 2, df=df_hk)
+        z = theta_RE / se_HK if se_HK > 0 else np.nan
+        tstat = z
+        p = 2 * (1 - tdist.cdf(abs(tstat), df=df_hk)) if np.isfinite(tstat) else np.nan
+
+        lo, hi = theta_RE - tcrit * se_HK, theta_RE + tcrit * se_HK
+
+        # Heterogeneity I^2 = max(0, (Q - df)/Q)
+        I2 = max(0.0, (Q - df_Q) / Q) * 100.0 if Q > 0 else 0.0
+
+        return pd.Series(
+            dict(
+                RD=theta_RE,
+                SE_RD=se_HK,
+                z=z,
+                t=tstat,
+                p_value=p,
+                RD_CI95_lower=lo,
+                RD_CI95_upper=hi,
+                tau2=tau2,
+                I2=I2,
+                m_runs=m,
+                df=df_hk,
+                method_used="DL_RE_HKSJ",
             )
         )
 
