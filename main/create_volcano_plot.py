@@ -13,7 +13,11 @@ from trace.io import (
     load_atc_dictionary,
     load_prevalence_statistics,
 )
-from trace.plotting.volcano import prepare_volcano_data, volcano_plot_per_method
+from trace.plotting.volcano import (
+    prepare_volcano_data,
+    volcano_plot_per_method,
+    volcano_overlay_methods,
+)
 from trace.plotting.volcano_plotly import build_plotly_volcano, save_plotly_figure
 from trace.statistics import compute_rd_pvalues, combine_random_effects_HKSJ
 
@@ -60,23 +64,40 @@ def ensure_required_columns(df: pd.DataFrame, required: Iterable[str]) -> None:
         print(f"  {col}: {n_missing} missing values")
 
 
-def summarise_per_run_effects(df_per_run: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate per-run RD and arm probabilities for richer hover metadata."""
+def summarise_per_run_effects(
+    df_per_run: pd.DataFrame,
+    *,
+    effect_col: str = "RD",
+    effect_alias: str | None = None,
+) -> pd.DataFrame:
+    """Aggregate per-run effect sizes and arm probabilities for hover metadata."""
+
+    if df_per_run.empty:
+        return pd.DataFrame()
+
+    agg_kwargs = dict(
+        per_run_n_runs=("run_id", "nunique"),
+        per_run_effect1_mean=("effect_1", "mean"),
+        per_run_effect1_std=("effect_1", "std"),
+        per_run_effect0_mean=("effect_0", "mean"),
+        per_run_effect0_std=("effect_0", "std"),
+    )
+
+    if effect_col in df_per_run.columns:
+        prefix = (effect_alias or effect_col).lower()
+        agg_kwargs.update(
+            {
+                f"per_run_{prefix}_mean": (effect_col, "mean"),
+                f"per_run_{prefix}_median": (effect_col, "median"),
+                f"per_run_{prefix}_std": (effect_col, "std"),
+                f"per_run_{prefix}_min": (effect_col, "min"),
+                f"per_run_{prefix}_max": (effect_col, "max"),
+            }
+        )
 
     grouped = (
         df_per_run.groupby(["method", "outcome"], dropna=False)
-        .agg(
-            per_run_n_runs=("run_id", "nunique"),
-            per_run_rd_mean=("RD", "mean"),
-            per_run_rd_median=("RD", "median"),
-            per_run_rd_std=("RD", "std"),
-            per_run_rd_min=("RD", "min"),
-            per_run_rd_max=("RD", "max"),
-            per_run_effect1_mean=("effect_1", "mean"),
-            per_run_effect1_std=("effect_1", "std"),
-            per_run_effect0_mean=("effect_0", "mean"),
-            per_run_effect0_std=("effect_0", "std"),
-        )
+        .agg(**agg_kwargs)
         .reset_index()
     )
     return grouped
@@ -119,11 +140,13 @@ def augment_volcano_dataframe(
     prevalence_summary: pd.DataFrame,
     per_run_summary: pd.DataFrame,
     atc_mapping: Dict[str, str],
+    *,
+    effect_col: str = "RD",
 ) -> pd.DataFrame:
     """Merge pooled results with metadata for plotting and hover details."""
 
     # Avoid duplicating RD/p-values that already exist in volcano_df
-    exclude_cols = {"RD", "p_value"}
+    exclude_cols = {effect_col, "p_value"}
     pooled_meta = pooled_df.drop(
         columns=[c for c in exclude_cols if c in pooled_df.columns]
     )
@@ -500,6 +523,38 @@ def main() -> None:
         )
 
     ensure_output_directory(FIGURES_DIR)
+
+    outcome_label_map = (
+        df_volcano_enriched.dropna(subset=["outcome_label"])
+        .drop_duplicates("outcome")
+        .set_index("outcome")["outcome_label"]
+        .to_dict()
+    )
+
+    print("\nCreating TMLE vs IPW overlay plot...")
+    # Visual overlay helps inspect method-specific discrepancies for matched outcomes.
+    try:
+        fig_overlay, _ = volcano_overlay_methods(
+            df_volcano_enriched,
+            methods=("TMLE", "IPW"),
+            method_col="method",
+            outcome_col="outcome",
+            label_map=outcome_label_map,
+            annotate_top_n=10,
+            point_size=60,
+        )
+    except ValueError as err:
+        print(f"Skipping TMLE vs IPW overlay plot: {err}")
+    else:
+        overlay_png = FIGURES_DIR / "volcano_plot_tmle_ipw_overlay.png"
+        fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
+        print(f"Saved overlay plot to: {overlay_png}")
+
+        overlay_pdf = FIGURES_DIR / "volcano_plot_tmle_ipw_overlay.pdf"
+        fig_overlay.savefig(overlay_pdf, bbox_inches="tight")
+        print(f"Saved overlay plot to: {overlay_pdf}")
+
+        plt.close(fig_overlay)
 
     print("\nCreating volcano plot...")
     fig, axes = volcano_plot_per_method(
