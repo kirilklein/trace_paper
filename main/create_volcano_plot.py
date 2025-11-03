@@ -18,7 +18,11 @@ from trace.plotting.volcano import (
     volcano_plot_per_method,
     volcano_overlay_methods,
 )
-from trace.plotting.volcano_plotly import build_plotly_volcano, save_plotly_figure
+from trace.plotting.volcano_plotly import (
+    build_plotly_volcano,
+    build_plotly_overlay_methods,
+    save_plotly_figure,
+)
 from trace.statistics import compute_rd_pvalues, combine_random_effects_HKSJ
 
 
@@ -541,7 +545,7 @@ def main() -> None:
             outcome_col="outcome",
             label_map=outcome_label_map,
             annotate_top_n=10,
-            point_size=60,
+            point_size=45,
         )
     except ValueError as err:
         print(f"Skipping TMLE vs IPW overlay plot: {err}")
@@ -555,6 +559,32 @@ def main() -> None:
         print(f"Saved overlay plot to: {overlay_pdf}")
 
         plt.close(fig_overlay)
+
+    print("\nCreating TMLE vs IPW overlay plot (interactive)...")
+    try:
+        plotly_overlay = build_plotly_overlay_methods(
+            df_volcano_enriched,
+            methods=("TMLE", "IPW"),
+            method_col="method",
+            outcome_col="outcome",
+            label_map=outcome_label_map,
+            marker_size=9,
+        )
+    except ValueError as err:
+        print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+    else:
+        overlay_html = FIGURES_DIR / "volcano_plot_tmle_ipw_overlay_interactive.html"
+        overlay_png = FIGURES_DIR / "volcano_plot_tmle_ipw_overlay_interactive.png"
+        save_plotly_figure(
+            plotly_overlay,
+            html_path=overlay_html,
+            png_path=overlay_png,
+            width=900,
+            height=600,
+            scale=2.0,
+        )
+        print(f"Saved interactive overlay to: {overlay_html}")
+        print(f"Saved interactive overlay snapshot to: {overlay_png}")
 
     print("\nCreating volcano plot...")
     fig, axes = volcano_plot_per_method(
