@@ -24,6 +24,9 @@ from trace.statistics import (
     pool_arm_logits,
     rd_inference_from_arm_logits,
     compute_rd_pvalues,
+    rr_inference_from_arm_logits,
+    compute_rr_from_arm_estimates,
+    combine_rr_random_effects_HKSJ,
 )
 
 
@@ -361,6 +364,46 @@ class TestRDInference(unittest.TestCase):
         self.assertGreater(np.abs(result["z"]), 3)
 
 
+class TestRRInference(unittest.TestCase):
+    """Test rr_inference_from_arm_logits function."""
+
+    def test_basic_calculation(self):
+        """Basic RR calculation should match analytical expectations."""
+        p1, p0 = 0.6, 0.3
+        eta1 = logit(p1)
+        eta0 = logit(p0)
+        se1 = 0.1
+        se0 = 0.1
+
+        result = rr_inference_from_arm_logits(eta1, se1, eta0, se0)
+
+        expected_rr = p1 / p0
+        expected_log_rr = np.log(expected_rr)
+        expected_var = ((1 - p1) ** 2) * (se1**2) + ((1 - p0) ** 2) * (se0**2)
+
+        np.testing.assert_almost_equal(result["RR"], expected_rr, decimal=6)
+        np.testing.assert_almost_equal(result["log_RR"], expected_log_rr, decimal=6)
+        np.testing.assert_almost_equal(
+            result["SE_log_RR"], np.sqrt(expected_var), decimal=6
+        )
+
+        # Should be significant because RR is far from 1 with modest SE
+        self.assertLess(result["p_value"], 0.05)
+
+    def test_null_ratio(self):
+        """When the arms are equal the RR should be 1 and non-significant."""
+        eta1 = logit(0.5)
+        eta0 = logit(0.5)
+        se1 = 0.1
+        se0 = 0.1
+
+        result = rr_inference_from_arm_logits(eta1, se1, eta0, se0)
+
+        np.testing.assert_almost_equal(result["RR"], 1.0, decimal=6)
+        np.testing.assert_almost_equal(result["log_RR"], 0.0, decimal=6)
+        self.assertGreater(result["p_value"], 0.1)
+
+
 class TestComputeRDPvalues(unittest.TestCase):
     """Test compute_rd_pvalues end-to-end function."""
 
@@ -425,6 +468,70 @@ class TestComputeRDPvalues(unittest.TestCase):
 
         for col in ["method", "outcome", "run_id"]:
             self.assertIn(col, result.columns)
+
+
+class TestComputeRRFromArmEstimates(unittest.TestCase):
+    """Test compute_rr_from_arm_estimates function."""
+
+    def setUp(self):
+        self.df = pd.DataFrame(
+            {
+                "method": ["IPW", "IPW", "TMLE", "TMLE"],
+                "outcome": ["A", "A", "A", "A"],
+                "run_id": ["run1", "run2", "run1", "run2"],
+                "effect_1": [0.6, 0.62, 0.58, 0.60],
+                "effect_1_CI95_lower": [0.55, 0.57, 0.53, 0.55],
+                "effect_1_CI95_upper": [0.65, 0.67, 0.63, 0.65],
+                "effect_0": [0.3, 0.32, 0.28, 0.30],
+                "effect_0_CI95_lower": [0.25, 0.27, 0.23, 0.25],
+                "effect_0_CI95_upper": [0.35, 0.37, 0.33, 0.35],
+            }
+        )
+
+    def test_per_run(self):
+        result = compute_rr_from_arm_estimates(self.df, group_cols=None)
+
+        self.assertEqual(len(result), len(self.df))
+        for col in ["RR", "log_RR", "SE_log_RR", "p_value"]:
+            self.assertIn(col, result.columns)
+
+        # Since effect_1 > effect_0, RR should be > 1
+        self.assertTrue(np.all(result["RR"] > 1.0))
+
+    def test_grouped(self):
+        result = compute_rr_from_arm_estimates(
+            self.df, group_cols=["method", "outcome"]
+        )
+
+        self.assertEqual(len(result), 2)
+        for col in ["RR", "log_RR", "SE_log_RR", "p_value"]:
+            self.assertIn(col, result.columns)
+
+
+class TestCombineRRRandomEffects(unittest.TestCase):
+    """Test combine_rr_random_effects_HKSJ helper."""
+
+    def test_basic_pooling(self):
+        df = pd.DataFrame(
+            {
+                "method": ["IPW", "IPW"],
+                "outcome": ["A", "A"],
+                "log_RR": [0.1, 0.2],
+                "SE_log_RR": [0.05, 0.05],
+            }
+        )
+
+        result = combine_rr_random_effects_HKSJ(df)
+
+        self.assertEqual(len(result), 1)
+        self.assertIn("RR", result.columns)
+        self.assertIn("log_RR", result.columns)
+        self.assertIn("RR_CI95_upper", result.columns)
+
+        # RR should be exp(log_RR)
+        np.testing.assert_almost_equal(
+            result.loc[0, "RR"], np.exp(result.loc[0, "log_RR"]), decimal=6
+        )
 
 
 class TestEdgeCases(unittest.TestCase):
