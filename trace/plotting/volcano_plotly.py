@@ -250,9 +250,7 @@ def build_plotly_overlay_methods(
         _build_hover_text, axis=1, method_col=method_col, outcome_col=outcome_col
     )
 
-    paired_outcomes = (
-        subset.groupby(outcome_col)[method_col].nunique().eq(len(methods))
-    )
+    paired_outcomes = subset.groupby(outcome_col)[method_col].nunique().eq(len(methods))
     paired_outcomes = paired_outcomes[paired_outcomes].index
 
     paired = subset[subset[outcome_col].isin(paired_outcomes)].copy()
@@ -265,16 +263,20 @@ def build_plotly_overlay_methods(
         group = group.set_index(method_col)
         if not all(m in group.index for m in methods):
             continue
-        line_x.extend([
-            group.loc[methods[0], rd_col],
-            group.loc[methods[1], rd_col],
-            None,
-        ])
-        line_y.extend([
-            group.loc[methods[0], neglog_col],
-            group.loc[methods[1], neglog_col],
-            None,
-        ])
+        line_x.extend(
+            [
+                group.loc[methods[0], rd_col],
+                group.loc[methods[1], rd_col],
+                None,
+            ]
+        )
+        line_y.extend(
+            [
+                group.loc[methods[0], neglog_col],
+                group.loc[methods[1], neglog_col],
+                None,
+            ]
+        )
 
     fig = go.Figure()
 
