@@ -37,7 +37,7 @@ def adjust_pvalues(
 ) -> np.ndarray:
     """
     Return adjusted p-values (q-values) in the original order.
-    
+
     Parameters
     ----------
     pvals : iterable of float
@@ -47,12 +47,12 @@ def adjust_pvalues(
         - 'bh': Benjamini-Hochberg step-up FDR control (default)
         - 'bonferroni': Bonferroni family-wise error rate control
         - 'none': No adjustment (q = p)
-    
+
     Returns
     -------
     np.ndarray
         Adjusted p-values (q-values) in original order
-    
+
     Notes
     -----
     The Benjamini-Hochberg procedure controls the False Discovery Rate (FDR),
@@ -62,7 +62,7 @@ def adjust_pvalues(
     """
     p = np.asarray(pvals, dtype=float)
     n = p.size
-    
+
     if method == "none":
         return p.copy()
 
@@ -75,7 +75,7 @@ def adjust_pvalues(
         q = np.full_like(p, np.nan, dtype=float)
         if finite_mask.sum() == 0:
             return q  # all NaN
-        
+
         ps = p[finite_mask]
         order = np.argsort(ps)
         ranks = np.empty_like(order)
@@ -107,11 +107,11 @@ def prepare_volcano_data(
 ) -> pd.DataFrame:
     """
     Prepare data for volcano plotting.
-    
+
     Computes adjusted p-values and -log10(p) transformation needed for
     volcano plots. Can adjust p-values either within each method separately
     or globally across all methods.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -130,14 +130,14 @@ def prepare_volcano_data(
         Whether to adjust within each method or globally (default: "by_method")
     p_floor : float, optional
         Minimum p-value for -log10 transformation to avoid inf (default: 1e-300)
-    
+
     Returns
     -------
     pd.DataFrame
         DataFrame with columns: method, outcome, RD, p_value, q_value, neglog10p
     """
     d = df.copy()
-    
+
     if adjust_per == "by_method":
         q = np.empty(len(d), dtype=float)
         for m, idx in d.groupby(method_col).groups.items():
@@ -148,7 +148,7 @@ def prepare_volcano_data(
 
     # Robust -log10 p
     d["neglog10p"] = -np.log10(np.clip(d[p_col].values, p_floor, 1.0))
-    
+
     return d[[method_col, outcome_col, rd_col, p_col, "q_value", "neglog10p"]].rename(
         columns={rd_col: "RD", p_col: "p_value"}
     )
@@ -171,11 +171,11 @@ def volcano_plot_per_method(
 ) -> Tuple[Figure, list]:
     """
     Create volcano plots with one panel per method.
-    
+
     Each panel shows risk difference (x-axis) vs -log10(p-value) (y-axis),
     with points colored by significance (q < alpha). Includes reference lines
     at the significance threshold and RD = 0, and annotates top hits.
-    
+
     Parameters
     ----------
     df_volcano : pd.DataFrame
@@ -199,14 +199,14 @@ def volcano_plot_per_method(
         Color for significant points (default: None, uses matplotlib default)
     ns_color : str, optional
         Color for non-significant points (default: None, uses matplotlib default)
-    
+
     Returns
     -------
     fig : matplotlib.figure.Figure
         Figure object containing all panels
     axes : list of matplotlib.axes.Axes
         List of axes objects, one per method
-    
+
     Notes
     -----
     - Horizontal line shows -log10(alpha) significance threshold
@@ -235,22 +235,34 @@ def volcano_plot_per_method(
             continue
 
         # Significant mask by q < alpha
-        sig = (d["q_value"] < alpha)
+        sig = d["q_value"] < alpha
 
         # Colors (allow user overrides, else use cycle)
         c_sig = sig_color
         c_ns = ns_color
 
         # Non-significant points
-        ax.scatter(d.loc[~sig, "RD"], d.loc[~sig, "neglog10p"], s=point_size,
-                   alpha=0.7, label="q ≥ α", color=c_ns)
+        ax.scatter(
+            d.loc[~sig, "RD"],
+            d.loc[~sig, "neglog10p"],
+            s=point_size,
+            alpha=0.7,
+            label="q ≥ α",
+            color=c_ns,
+        )
         # Significant points
-        ax.scatter(d.loc[sig, "RD"], d.loc[sig, "neglog10p"], s=point_size,
-                   alpha=0.9, label="q < α", color=c_sig)
+        ax.scatter(
+            d.loc[sig, "RD"],
+            d.loc[sig, "neglog10p"],
+            s=point_size,
+            alpha=0.9,
+            label="q < α",
+            color=c_sig,
+        )
 
         # Guide lines
-        ax.axhline(y_thr, linestyle="--", linewidth=1, color='gray', alpha=0.5)
-        ax.axvline(0.0, linestyle="--", linewidth=1, color='gray', alpha=0.5)
+        ax.axhline(y_thr, linestyle="--", linewidth=1, color="gray", alpha=0.5)
+        ax.axvline(0.0, linestyle="--", linewidth=1, color="gray", alpha=0.5)
 
         # Labels: top hits by -log10 p (limit per panel)
         top = d.sort_values("neglog10p", ascending=False).head(max_labels_per_panel)
@@ -259,8 +271,11 @@ def volcano_plot_per_method(
             if label_map and name in label_map:
                 name = label_map[name]
             ax.annotate(
-                name, (r["RD"], r["neglog10p"]),
-                xytext=(3, 3), textcoords="offset points", fontsize=9
+                name,
+                (r["RD"], r["neglog10p"]),
+                xytext=(3, 3),
+                textcoords="offset points",
+                fontsize=9,
             )
 
         ax.set_title(str(m))
@@ -273,4 +288,3 @@ def volcano_plot_per_method(
         fig.legend(handles, labels, loc="upper right")
     fig.tight_layout()
     return fig, axes
-

@@ -41,14 +41,14 @@ COL_E0_U = "effect_0_CI95_upper"
 def _clip_prob(p: Union[float, np.ndarray], eps: float = 1e-8) -> np.ndarray:
     """
     Clip probabilities to [eps, 1-eps] to avoid log(0) or log(1).
-    
+
     Parameters
     ----------
     p : float or np.ndarray
         Probability or array of probabilities
     eps : float, optional
         Small value to clip probabilities away from 0 and 1 (default: 1e-8)
-    
+
     Returns
     -------
     np.ndarray
@@ -60,12 +60,12 @@ def _clip_prob(p: Union[float, np.ndarray], eps: float = 1e-8) -> np.ndarray:
 def logit(p: Union[float, np.ndarray]) -> np.ndarray:
     """
     Compute the logit transformation: log(p / (1-p)).
-    
+
     Parameters
     ----------
     p : float or np.ndarray
         Probability or array of probabilities
-    
+
     Returns
     -------
     np.ndarray
@@ -78,12 +78,12 @@ def logit(p: Union[float, np.ndarray]) -> np.ndarray:
 def inv_logit(x: Union[float, np.ndarray]) -> np.ndarray:
     """
     Compute the inverse logit (sigmoid) transformation: 1 / (1 + exp(-x)).
-    
+
     Parameters
     ----------
     x : float or np.ndarray
         Value or array of values on the logit scale
-    
+
     Returns
     -------
     np.ndarray
@@ -94,16 +94,14 @@ def inv_logit(x: Union[float, np.ndarray]) -> np.ndarray:
 
 
 def se_from_prob_ci_on_logit(
-    lo: Union[float, np.ndarray], 
-    hi: Union[float, np.ndarray], 
-    z: float = 1.96
+    lo: Union[float, np.ndarray], hi: Union[float, np.ndarray], z: float = 1.96
 ) -> np.ndarray:
     """
     Convert probability-scale CI [lo, hi] to a logit-scale SE via CI width.
-    
+
     Assumes the CI on the probability scale corresponds to point estimate ± z*SE
     on the logit scale.
-    
+
     Parameters
     ----------
     lo : float or np.ndarray
@@ -112,7 +110,7 @@ def se_from_prob_ci_on_logit(
         Upper bound of 95% CI on probability scale
     z : float, optional
         Z-score for the confidence level (default: 1.96 for 95% CI)
-    
+
     Returns
     -------
     np.ndarray
@@ -128,16 +126,16 @@ def se_from_prob_ci_on_logit(
 def add_logit_arm_metrics(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add per-row logit metrics for each arm.
-    
+
     Computes logit transformations and standard errors for both treatment
     arms based on probability estimates and their confidence intervals.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
         DataFrame with columns: effect_1, effect_0, effect_1_CI95_lower,
         effect_1_CI95_upper, effect_0_CI95_lower, effect_0_CI95_upper
-    
+
     Returns
     -------
     pd.DataFrame
@@ -172,14 +170,14 @@ def pool_arm_logits(
     group_cols: Union[str, List[str]],
     eta_col: str,
     se_col: str,
-    out_prefix: str
+    out_prefix: str,
 ) -> pd.DataFrame:
     """
     Pool a logit parameter across runs via inverse-variance weighting.
-    
+
     For each group, computes a weighted average of the logit estimates where
     weights are proportional to 1/SE^2.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -192,7 +190,7 @@ def pool_arm_logits(
         Column name containing standard errors
     out_prefix : str
         Prefix for output columns
-    
+
     Returns
     -------
     pd.DataFrame
@@ -201,27 +199,28 @@ def pool_arm_logits(
         - {out_prefix}_se: pooled SE
         - n_runs_used: number of runs included
     """
+
     def _agg(g):
         g = g.replace([np.inf, -np.inf], np.nan).dropna(subset=[eta_col, se_col])
         if g.empty:
-            return pd.Series({
-                out_prefix: np.nan,
-                f"{out_prefix}_se": np.nan,
-                "n_runs_used": 0
-            })
+            return pd.Series(
+                {out_prefix: np.nan, f"{out_prefix}_se": np.nan, "n_runs_used": 0}
+            )
         w = 1.0 / (g[se_col].values ** 2)
         eta_hat = np.sum(w * g[eta_col].values) / np.sum(w)
         se_hat = np.sqrt(1.0 / np.sum(w))
-        return pd.Series({
-            out_prefix: eta_hat,
-            f"{out_prefix}_se": se_hat,
-            "n_runs_used": int(g.shape[0])
-        })
+        return pd.Series(
+            {
+                out_prefix: eta_hat,
+                f"{out_prefix}_se": se_hat,
+                "n_runs_used": int(g.shape[0]),
+            }
+        )
 
     return (
         df.groupby(group_cols, as_index=False)
-          .apply(_agg, include_groups=False)
-          .reset_index(drop=True)
+        .apply(_agg, include_groups=False)
+        .reset_index(drop=True)
     )
 
 
@@ -233,16 +232,17 @@ def rd_inference_from_arm_logits(
     se1: np.ndarray,
     eta0: np.ndarray,
     se0: np.ndarray,
-    z_crit: float = 1.96
+    z_crit: float = 1.96,
+    verbose: bool = False,
 ) -> Dict[str, np.ndarray]:
     """
     Compute risk difference inference from arm logits using the delta method.
-    
+
     Transforms logit-scale estimates back to probability scale, computes
     risk difference (RD = p1 - p0), and uses the delta method to obtain
     the standard error of RD. Then computes Wald z-statistic, p-value,
     and confidence interval.
-    
+
     Parameters
     ----------
     eta1 : np.ndarray
@@ -255,7 +255,9 @@ def rd_inference_from_arm_logits(
         Standard errors for eta0
     z_crit : float, optional
         Critical z-value for confidence intervals (default: 1.96 for 95% CI)
-    
+    verbose : bool, optional
+        If True, print diagnostic warnings for extreme values (default: False)
+
     Returns
     -------
     dict
@@ -268,23 +270,95 @@ def rd_inference_from_arm_logits(
         - RD_CI95_upper: upper bound of 95% CI for RD
         - p1_hat: estimated probability for arm 1
         - p0_hat: estimated probability for arm 0
-    
+
     Notes
     -----
     Assumes no covariance between arm estimates (independence assumption).
     The delta method variance is: Var(RD) = (dp/deta)^2 * Var(eta)
     where dp/deta = p*(1-p) for the inverse logit transformation.
     """
+    # DIAGNOSTIC: Check for extreme input values
+    if verbose:
+        n_tiny_se1 = np.sum(se1 < 1e-6)
+        n_tiny_se0 = np.sum(se0 < 1e-6)
+        if n_tiny_se1 > 0 or n_tiny_se0 > 0:
+            print(
+                f"  WARNING: Found very small SEs: se1 < 1e-6: {n_tiny_se1}, "
+                f"se0 < 1e-6: {n_tiny_se0}"
+            )
+            if n_tiny_se1 > 0:
+                print(f"    Min se1: {np.min(se1):.2e}")
+            if n_tiny_se0 > 0:
+                print(f"    Min se0: {np.min(se0):.2e}")
+
+    # Transform from logit scale to probability scale
     p1 = inv_logit(eta1)
     p0 = inv_logit(eta0)
+
+    # Compute risk difference on probability scale
     rd = p1 - p0
 
-    # Delta-method variance of RD on probability scale
-    var_rd = (p1 * (1 - p1))**2 * (se1**2) + (p0 * (1 - p0))**2 * (se0**2)
+    # DIAGNOSTIC: Check for extreme probabilities
+    if verbose:
+        n_extreme_p1 = np.sum((p1 < 0.001) | (p1 > 0.999))
+        n_extreme_p0 = np.sum((p0 < 0.001) | (p0 > 0.999))
+        if n_extreme_p1 > 0 or n_extreme_p0 > 0:
+            print(
+                f"  WARNING: Extreme probabilities: p1 < 0.001 or > 0.999: {n_extreme_p1}, "
+                f"p0 < 0.001 or > 0.999: {n_extreme_p0}"
+            )
+
+    # Gaussian error propagation (delta method) for SE(RD)
+    #
+    # We have: RD = p1 - p0 where p_i = inv_logit(eta_i) = 1/(1 + exp(-eta_i))
+    #
+    # By the delta method:
+    #   Var(p_i) = (dp_i/deta_i)² * Var(eta_i)
+    #
+    # The derivative of inv_logit is:
+    #   dp_i/deta_i = p_i * (1 - p_i)
+    #
+    # Therefore:
+    #   Var(p_i) = [p_i * (1 - p_i)]² * SE(eta_i)²
+    #
+    # Since RD = p1 - p0 and assuming independence between arms:
+    #   Var(RD) = Var(p1) + Var(p0)
+    #           = [p1*(1-p1)]² * SE(eta1)² + [p0*(1-p0)]² * SE(eta0)²
+    #
+    var_rd = (p1 * (1 - p1)) ** 2 * (se1**2) + (p0 * (1 - p0)) ** 2 * (se0**2)
     se_rd = np.sqrt(var_rd)
+
+    # DIAGNOSTIC: Check for very small SE_RD
+    if verbose:
+        n_tiny_se_rd = np.sum(se_rd < 1e-6)
+        if n_tiny_se_rd > 0:
+            print(f"  WARNING: Very small SE_RD < 1e-6: {n_tiny_se_rd}")
+            print(f"    Min SE_RD: {np.min(se_rd):.2e}")
+            # Show which component is driving it
+            var_term1 = (p1 * (1 - p1)) ** 2 * (se1**2)
+            var_term0 = (p0 * (1 - p0)) ** 2 * (se0**2)
+            print(f"    Variance components:")
+            print(
+                f"      Term 1 (arm 1): min={np.min(var_term1):.2e}, median={np.median(var_term1):.2e}"
+            )
+            print(
+                f"      Term 0 (arm 0): min={np.min(var_term0):.2e}, median={np.median(var_term0):.2e}"
+            )
 
     z = rd / se_rd
     pval = 2 * (1 - norm.cdf(np.abs(z)))
+
+    # DIAGNOSTIC: Check for extreme z-statistics
+    if verbose:
+        n_extreme_z = np.sum(np.abs(z) > 30)
+        n_very_extreme_z = np.sum(np.abs(z) > 50)
+        if n_extreme_z > 0:
+            print(
+                f"  WARNING: Extreme z-statistics: |z| > 30: {n_extreme_z}, "
+                f"|z| > 50: {n_very_extreme_z}"
+            )
+            print(f"    Max |z|: {np.max(np.abs(z)):.2f}")
+
     rd_lo = rd - z_crit * se_rd
     rd_hi = rd + z_crit * se_rd
 
@@ -305,16 +379,53 @@ def rd_inference_from_arm_logits(
 # -----------------------------
 def compute_rd_pvalues(
     df: pd.DataFrame,
-    group_cols: Optional[Union[str, List[str]]] = None
+    group_cols: Optional[Union[str, List[str]]] = None,
+    pooling_method: str = "inverse_variance_arms",
+    verbose: bool = False,
 ) -> pd.DataFrame:
     """
-    Compute RD p-values either per row or pooled across runs.
-    
+    Compute risk difference (RD) p-values either per row or pooled across runs.
+
     Main orchestrator function that handles the complete workflow:
     1. Add logit metrics to input data
     2. Either compute per-row RDs or pool by group then compute RDs
     3. Return DataFrame with RD estimates and inference
-    
+
+    Pooling Methodology
+    -------------------
+    Three pooling methods are available:
+
+    **inverse_variance_arms (RECOMMENDED, default):**
+        Statistically principled approach that:
+        1. Transforms each arm to logit scale: eta_i = logit(p_i)
+        2. Pools each arm separately via inverse-variance weighting:
+           eta_pooled = sum(w_i * eta_i) / sum(w_i), where w_i = 1/SE_i²
+        3. Computes RD from pooled arms: RD = inv_logit(eta1) - inv_logit(eta0)
+        4. Uses Gaussian error propagation (delta method) for SE(RD):
+           Var(RD) = [p1*(1-p1)]² * Var(eta1) + [p0*(1-p0)]² * Var(eta0)
+
+        This method correctly propagates uncertainty through the logit transformation
+        and accounts for different precision in each arm.
+
+    **rubins_rules:**
+        Alternative approach from multiple imputation literature that:
+        1. Computes per-run RDs first
+        2. Pools RDs using Rubin's rules: T = W_bar + (1 + 1/m) * B
+           where W_bar = within-run variance, B = between-run variance
+        3. Uses t-distribution with Barnard-Rubin degrees of freedom
+
+        Useful for sensitivity analysis or when runs represent multiple imputations.
+        Accounts for between-run variability but ignores arm-level structure.
+
+    **random_effects_dl:**
+        Random effects meta-analysis (DerSimonian-Laird) that:
+        1. Computes per-run RDs first
+        2. Estimates between-run heterogeneity (tau²)
+        3. Pools using weights: w_i* = 1 / (SE_i² + tau²)
+
+        Appropriate when substantial heterogeneity exists across runs.
+        Ignores arm-level structure.
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -324,44 +435,389 @@ def compute_rd_pvalues(
     group_cols : str, list of str, or None, optional
         If None, compute per-row RDs. If specified, pool within each group
         (e.g., ["method", "outcome"]) before computing RDs.
-    
+    pooling_method : str, optional
+        Method for pooling across runs (default: "inverse_variance_arms"):
+        - "inverse_variance_arms": Principled arm-level pooling (recommended)
+        - "rubins_rules": Rubin's rules on RDs (for sensitivity analysis)
+        - "random_effects_dl": DL random effects on RDs (for heterogeneity)
+    verbose : bool, optional
+        If True, print diagnostic information during computation (default: False)
+
     Returns
     -------
     pd.DataFrame
         If group_cols is None: original DataFrame with added RD columns
         If group_cols specified: one row per group with pooled RD estimates
-        
+
         Added columns include: RD, SE_RD, z, p_value, RD_CI95_lower,
-        RD_CI95_upper, p1_hat, p0_hat
+        RD_CI95_upper, p1_hat, p0_hat (p1_hat/p0_hat only for inverse_variance_arms)
+
+    Notes
+    -----
+    The inverse_variance_arms method is recommended because it:
+    - Preserves the arm-level structure of the data
+    - Correctly propagates uncertainty through transformations
+    - Accounts for potentially different precision in each arm
+    - Follows standard practice for pooling probability estimates
+
+    Alternative methods (rubins_rules, random_effects_dl) are provided for
+    sensitivity analysis and may be appropriate in specific scenarios.
+
+    Examples
+    --------
+    >>> # Recommended: Pool arms separately
+    >>> df_pooled = compute_rd_pvalues(df, group_cols=['method', 'outcome'])
+
+    >>> # Sensitivity: Compare with Rubin's rules
+    >>> df_rubin = compute_rd_pvalues(df, group_cols=['method', 'outcome'],
+    ...                                pooling_method='rubins_rules')
     """
+    if verbose:
+        print(
+            f"\n  [DIAGNOSTIC] Starting compute_rd_pvalues with method '{pooling_method}'..."
+        )
+
+    # For Rubin's rules and random effects, we need per-run RDs first
+    if group_cols and pooling_method in ["rubins_rules", "random_effects_dl"]:
+        if verbose:
+            print(f"  [DIAGNOSTIC] Computing per-run RDs first...")
+
+        # Compute per-run RDs (no grouping)
+        df_per_run = compute_rd_pvalues(
+            df, group_cols=None, pooling_method="inverse_variance_arms", verbose=False
+        )
+
+        # Now pool the RDs using the specified method
+        if pooling_method == "rubins_rules":
+            if verbose:
+                print(f"  [DIAGNOSTIC] Applying Rubin's rules pooling...")
+            return combine_rubins_rules(df_per_run, group_cols=group_cols)
+        elif pooling_method == "random_effects_dl":
+            if verbose:
+                print(
+                    f"  [DIAGNOSTIC] Applying DerSimonian-Laird random effects pooling..."
+                )
+            return combine_random_effects_DL(df_per_run, group_cols=group_cols)
+
+    # Original inverse-variance-on-arms method
     dfl = add_logit_arm_metrics(df)
+
+    if verbose:
+        print(f"  [DIAGNOSTIC] After logit transformation:")
+        print(
+            f"    se_eta1: min={dfl['se_eta1'].min():.2e}, "
+            f"median={dfl['se_eta1'].median():.2e}, max={dfl['se_eta1'].max():.2e}"
+        )
+        print(
+            f"    se_eta0: min={dfl['se_eta0'].min():.2e}, "
+            f"median={dfl['se_eta0'].median():.2e}, max={dfl['se_eta0'].max():.2e}"
+        )
 
     if not group_cols:
         # Per-row computation
+        if verbose:
+            print(f"  [DIAGNOSTIC] Computing per-row RDs...")
         res = rd_inference_from_arm_logits(
             eta1=dfl["eta1"].values,
             se1=dfl["se_eta1"].values,
             eta0=dfl["eta0"].values,
             se0=dfl["se_eta0"].values,
+            verbose=verbose,
         )
         out = dfl.copy()
         for k, v in res.items():
             out[k] = v
         return out
 
-    # Pooled over groups
+    # Pooled over groups using inverse-variance on arms
+    if verbose:
+        print(f"  [DIAGNOSTIC] Pooling over groups: {group_cols}")
+
     arm1 = pool_arm_logits(dfl, group_cols, "eta1", "se_eta1", "eta1_pooled")
     arm0 = pool_arm_logits(dfl, group_cols, "eta0", "se_eta0", "eta0_pooled")
 
     pooled = pd.merge(arm1, arm0, on=group_cols, how="inner")
+
+    if verbose:
+        print(f"  [DIAGNOSTIC] After pooling:")
+        print(
+            f"    eta1_pooled_se: min={pooled['eta1_pooled_se'].min():.2e}, "
+            f"median={pooled['eta1_pooled_se'].median():.2e}, "
+            f"max={pooled['eta1_pooled_se'].max():.2e}"
+        )
+        print(
+            f"    eta0_pooled_se: min={pooled['eta0_pooled_se'].min():.2e}, "
+            f"median={pooled['eta0_pooled_se'].median():.2e}, "
+            f"max={pooled['eta0_pooled_se'].max():.2e}"
+        )
+        print(f"  [DIAGNOSTIC] Computing RDs from pooled estimates...")
 
     res = rd_inference_from_arm_logits(
         eta1=pooled["eta1_pooled"].values,
         se1=pooled["eta1_pooled_se"].values,
         eta0=pooled["eta0_pooled"].values,
         se0=pooled["eta0_pooled_se"].values,
+        verbose=verbose,
     )
     for k, v in res.items():
         pooled[k] = v
     return pooled
 
+
+# Import tdist for Rubin's rules
+from scipy.stats import t as tdist
+
+# Expect df with columns: method, outcome, run_id, RD, SE_RD
+# You can feed either per-run results or per-run-per-method-per-outcome rows.
+
+
+# -----------------------------
+# Rubin's rules combiner
+# -----------------------------
+def combine_rubins_rules(
+    df: pd.DataFrame, group_cols=("method", "outcome"), zcrit=1.96
+) -> pd.DataFrame:
+    """
+    Pool risk differences across runs using Rubin's rules.
+
+    This method is adapted from multiple imputation literature (Rubin, 1987).
+    It pools pre-computed RD estimates by combining within-run and between-run
+    variance components.
+
+    Mathematical Details
+    --------------------
+    For m runs with estimates theta_i and variances U_i:
+
+    1. Pooled estimate: theta_bar = mean(theta_i)
+    2. Within-run variance: W_bar = mean(U_i)
+    3. Between-run variance: B = var(theta_i)
+    4. Total variance: T = W_bar + (1 + 1/m) * B
+    5. Standard error: SE = sqrt(T)
+    6. Degrees of freedom (Barnard-Rubin):
+       df = (m-1) * [1 + W_bar / ((1 + 1/m) * B)]²
+    7. Inference uses t-distribution with df
+
+    When to Use
+    -----------
+    - Runs represent multiple imputations or bootstrap samples
+    - You want to account for between-run variability
+    - Sensitivity analysis to compare with arm-level pooling
+
+    NOT recommended when:
+    - Arm-level data is available (use inverse_variance_arms instead)
+    - Runs should be weighted by precision (use random_effects_dl)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with per-run RD estimates
+        Required columns: RD, SE_RD, plus columns in group_cols
+    group_cols : tuple or list of str, optional
+        Columns to group by (default: ("method", "outcome"))
+    zcrit : float, optional
+        Critical value for confidence intervals (default: 1.96 for 95% CI)
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per group with columns:
+        - RD: pooled risk difference
+        - SE_RD: pooled standard error
+        - z: test statistic (actually t-statistic if m >= 2)
+        - p_value: two-sided p-value
+        - RD_CI95_lower, RD_CI95_upper: confidence interval bounds
+        - df: degrees of freedom
+        - m_runs: number of runs pooled
+        - method_used: "rubin" or "rubin_single"
+
+    References
+    ----------
+    Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys.
+    Wiley, New York.
+
+    Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom
+    with multiple imputation. Biometrika, 86(4), 948-955.
+    """
+
+    def _agg(g):
+        thetas = g["RD"].astype(float).values
+        U = (g["SE_RD"].astype(float).values) ** 2
+        m = len(g)
+        if m < 2:
+            # Fall back to the single run
+            theta_bar = thetas.mean()
+            T = U.mean() if m == 1 else np.nan
+            se = np.sqrt(T)
+            z = theta_bar / se
+            p = 2 * (1 - norm.cdf(abs(z)))
+            return pd.Series(
+                dict(
+                    RD=theta_bar,
+                    SE_RD=se,
+                    df=np.nan,
+                    z=np.nan,
+                    p_value=p,
+                    RD_CI95_lower=theta_bar - zcrit * se,
+                    RD_CI95_upper=theta_bar + zcrit * se,
+                    m_runs=m,
+                    method_used="rubin_single",
+                )
+            )
+
+        theta_bar = thetas.mean()
+        Wbar = U.mean()
+        B = thetas.var(ddof=1)
+        T = Wbar + (1 + 1 / m) * B
+        se = np.sqrt(T)
+
+        # Barnard–Rubin df
+        if B == 0:
+            # no between-run variability -> use z approx
+            tstat = theta_bar / se
+            p = 2 * (1 - norm.cdf(abs(tstat)))
+            df = np.inf
+        else:
+            df = (m - 1) * (1 + Wbar / ((1 + 1 / m) * B)) ** 2
+            tstat = theta_bar / se
+            p = 2 * (1 - tdist.cdf(abs(tstat), df=df))
+
+        return pd.Series(
+            dict(
+                RD=theta_bar,
+                SE_RD=se,
+                df=df,
+                z=tstat,
+                p_value=p,
+                RD_CI95_lower=theta_bar - zcrit * se,
+                RD_CI95_upper=theta_bar + zcrit * se,
+                m_runs=m,
+                method_used="rubin",
+            )
+        )
+
+    out = (
+        df.groupby(list(group_cols), as_index=False).apply(_agg).reset_index(drop=True)
+    )
+    return out
+
+
+# -----------------------------
+# Random-effects (DerSimonian–Laird) combiner
+# -----------------------------
+def combine_random_effects_DL(
+    df: pd.DataFrame, group_cols=("method", "outcome"), zcrit=1.96
+) -> pd.DataFrame:
+    """
+    Pool risk differences using DerSimonian-Laird random effects meta-analysis.
+
+    This classic random effects method estimates between-study heterogeneity
+    and uses it to adjust the pooling weights. It's commonly used in meta-analysis
+    when heterogeneity is expected across studies/runs.
+
+    Mathematical Details
+    --------------------
+    For k runs with estimates y_i and variances v_i:
+
+    1. Fixed-effect pooled estimate (for Q statistic):
+       theta_FE = sum(w_i * y_i) / sum(w_i), where w_i = 1/v_i
+
+    2. Cochran's Q statistic:
+       Q = sum(w_i * (y_i - theta_FE)²)
+
+    3. Heterogeneity variance (DerSimonian-Laird estimator):
+       tau² = max(0, (Q - (k-1)) / C)
+       where C = sum(w_i) - sum(w_i²) / sum(w_i)
+
+    4. Random effects weights:
+       w_i* = 1 / (v_i + tau²)
+
+    5. Random effects pooled estimate:
+       theta_RE = sum(w_i* * y_i) / sum(w_i*)
+       SE_RE = sqrt(1 / sum(w_i*))
+
+    6. Inference uses normal distribution (z-test)
+
+    When to Use
+    -----------
+    - Substantial heterogeneity expected across runs
+    - Runs come from different populations/settings
+    - Conservative inference desired (wider CIs than fixed effects)
+    - Sensitivity analysis to assess impact of heterogeneity
+
+    NOT recommended when:
+    - Arm-level data is available (use inverse_variance_arms instead)
+    - No heterogeneity expected (use fixed effects or Rubin's rules)
+    - Very few runs (tau² estimate unreliable with k < 5)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with per-run RD estimates
+        Required columns: RD, SE_RD, plus columns in group_cols
+    group_cols : tuple or list of str, optional
+        Columns to group by (default: ("method", "outcome"))
+    zcrit : float, optional
+        Critical value for confidence intervals (default: 1.96 for 95% CI)
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per group with columns:
+        - RD: pooled risk difference
+        - SE_RD: pooled standard error
+        - z: z-statistic
+        - p_value: two-sided p-value
+        - RD_CI95_lower, RD_CI95_upper: confidence interval bounds
+        - tau2: estimated between-run heterogeneity variance
+        - m_runs: number of runs pooled
+        - method_used: "DL_RE"
+
+    References
+    ----------
+    DerSimonian, R., & Laird, N. (1986). Meta-analysis in clinical trials.
+    Controlled Clinical Trials, 7(3), 177-188.
+
+    Notes
+    -----
+    When tau² = 0 (no heterogeneity), this reduces to fixed-effect
+    inverse-variance pooling. Large tau² indicates substantial heterogeneity,
+    suggesting results may not be directly comparable across runs.
+    """
+
+    def _agg(g):
+        yi = g["RD"].astype(float).values
+        vi = (g["SE_RD"].astype(float).values) ** 2
+        wi = 1.0 / vi
+
+        # Fixed-effect pooled (for Q)
+        theta_FE = np.sum(wi * yi) / np.sum(wi)
+        Q = np.sum(wi * (yi - theta_FE) ** 2)
+        k = len(yi)
+        df_Q = max(k - 1, 1)
+        c = np.sum(wi) - (np.sum(wi**2) / np.sum(wi))
+        tau2 = max((Q - df_Q) / c, 0.0) if c > 0 else 0.0
+
+        w_star = 1.0 / (vi + tau2)
+        theta_RE = np.sum(w_star * yi) / np.sum(w_star)
+        se_RE = np.sqrt(1.0 / np.sum(w_star))
+        z = theta_RE / se_RE
+        p = 2 * (1 - norm.cdf(abs(z)))
+
+        return pd.Series(
+            dict(
+                RD=theta_RE,
+                SE_RD=se_RE,
+                tau2=tau2,
+                z=z,
+                p_value=p,
+                RD_CI95_lower=theta_RE - zcrit * se_RE,
+                RD_CI95_upper=theta_RE + zcrit * se_RE,
+                m_runs=k,
+                method_used="DL_RE",
+            )
+        )
+
+    out = (
+        df.groupby(list(group_cols), as_index=False).apply(_agg).reset_index(drop=True)
+    )
+    return out

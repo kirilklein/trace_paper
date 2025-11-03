@@ -17,4 +17,3 @@ __all__ = [
     "prepare_volcano_data",
     "volcano_plot_per_method",
 ]
-

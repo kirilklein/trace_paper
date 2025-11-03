@@ -9,7 +9,7 @@ import sys
 import os
 
 # Add parent directory to path to import trace modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -21,12 +21,14 @@ from trace.plotting import adjust_pvalues, prepare_volcano_data, volcano_plot_pe
 # This example shows results from two methods (IPW and TMLE) applied to
 # multiple outcomes with varying effect sizes and p-values.
 
-example_data = pd.DataFrame({
-    "method":  ["IPW", "IPW", "IPW", "TMLE", "TMLE", "TMLE"],
-    "outcome": ["A01AA", "B02BB", "C03CC", "A01AA", "B02BB", "C03CC"],
-    "RD":      [0.012, -0.015, 0.004, 0.011, -0.022, 0.001],
-    "p_value": [0.003, 0.12, 0.40, 2e-5, 0.049, 0.80],
-})
+example_data = pd.DataFrame(
+    {
+        "method": ["IPW", "IPW", "IPW", "TMLE", "TMLE", "TMLE"],
+        "outcome": ["A01AA", "B02BB", "C03CC", "A01AA", "B02BB", "C03CC"],
+        "RD": [0.012, -0.015, 0.004, 0.011, -0.022, 0.001],
+        "p_value": [0.003, 0.12, 0.40, 2e-5, 0.049, 0.80],
+    }
+)
 
 print("=" * 80)
 print("EXAMPLE: Volcano Plot Creation")
@@ -67,8 +69,8 @@ volcano_data = prepare_volcano_data(
     p_col="p_value",
     method_col="method",
     outcome_col="outcome",
-    adjust="bh",            # Options: 'bh' (Benjamini-Hochberg), 'bonferroni', 'none'
-    adjust_per="by_method", # Options: 'by_method' (adjust within each method), 'global'
+    adjust="bh",  # Options: 'bh' (Benjamini-Hochberg), 'bonferroni', 'none'
+    adjust_per="by_method",  # Options: 'by_method' (adjust within each method), 'global'
 )
 
 print("\nPrepared volcano data:")
@@ -81,8 +83,10 @@ print("  - neglog10p: -log10(p_value) for y-axis of volcano plot")
 print("\nEffect of Benjamini-Hochberg adjustment:")
 for _, row in volcano_data.iterrows():
     sig_status = "significant" if row["q_value"] < 0.05 else "not significant"
-    print(f"  {row['method']:5s} {row['outcome']:5s}: "
-          f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})")
+    print(
+        f"  {row['method']:5s} {row['outcome']:5s}: "
+        f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})"
+    )
 
 # -----------------------------
 # Create volcano plot
@@ -93,14 +97,14 @@ print("=" * 80)
 
 fig, axes = volcano_plot_per_method(
     volcano_data,
-    alpha=0.05,                    # Significance threshold (q < 0.05)
+    alpha=0.05,  # Significance threshold (q < 0.05)
     method_col="method",
     outcome_col="outcome",
-    label_map=label_map,           # Use custom labels for some outcomes
-    max_labels_per_panel=5,        # Annotate up to 5 top hits per panel
-    figsize_per_panel=(6, 4),      # Size of each panel in inches
-    point_size=18,                 # Marker size
-    sig_color=None,                # Use matplotlib default colors
+    label_map=label_map,  # Use custom labels for some outcomes
+    max_labels_per_panel=5,  # Annotate up to 5 top hits per panel
+    figsize_per_panel=(6, 4),  # Size of each panel in inches
+    point_size=18,  # Marker size
+    sig_color=None,  # Use matplotlib default colors
     ns_color=None,
 )
 
@@ -154,8 +158,10 @@ volcano_data_bonf = prepare_volcano_data(
 print("\nBonferroni-adjusted q-values (more conservative):")
 for _, row in volcano_data_bonf.iterrows():
     sig_status = "significant" if row["q_value"] < 0.05 else "not significant"
-    print(f"  {row['method']:5s} {row['outcome']:5s}: "
-          f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})")
+    print(
+        f"  {row['method']:5s} {row['outcome']:5s}: "
+        f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})"
+    )
 
 print("\nNote: Bonferroni is more conservative — fewer outcomes are significant")
 
@@ -179,4 +185,3 @@ Best practices:
   - Label and investigate top hits
   - Consider biological/clinical significance, not just statistical
 """)
-
