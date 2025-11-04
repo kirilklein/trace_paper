@@ -274,7 +274,7 @@ def volcano_plot_per_method(
             d.loc[~sig, "neglog10p"],
             s=point_size,
             alpha=0.7,
-            label="q ≥ α",
+            label="BH q ≥ α",
             color=c_ns,
         )
         # Significant points
@@ -283,7 +283,7 @@ def volcano_plot_per_method(
             d.loc[sig, "neglog10p"],
             s=point_size,
             alpha=0.9,
-            label="q < α",
+            label="BH q < α",
             color=c_sig,
         )
 
@@ -316,7 +316,12 @@ def volcano_plot_per_method(
     axes[0].set_ylabel("-log10(p-value)")
     handles, labels = axes[-1].get_legend_handles_labels()
     if labels:
-        fig.legend(handles, labels, loc="upper right")
+        fig.legend(
+            handles,
+            labels,
+            loc="upper right",
+            title="BH-adjusted q",
+        )
     fig.tight_layout()
     return fig, axes
 

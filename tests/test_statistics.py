@@ -445,11 +445,12 @@ class TestComputeRDPvalues(unittest.TestCase):
         self.assertEqual(len(result), 2)  # IPW and TMLE
 
         # Should have pooling columns
-        self.assertIn("n_runs_used_x", result.columns)
-        self.assertIn("n_runs_used_y", result.columns)
+        self.assertIn("n_runs_arm1", result.columns)
+        self.assertIn("n_runs_arm0", result.columns)
+        self.assertIn("n_runs_shared", result.columns)
 
         # Should have 2 runs per method
-        self.assertTrue(np.all(result["n_runs_used_x"] == 2))
+        self.assertTrue(np.all(result["n_runs_shared"] == 2))
 
     def test_pooled_se_smaller(self):
         """Test that pooled analysis has smaller SE."""

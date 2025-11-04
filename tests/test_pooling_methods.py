@@ -99,3 +99,4 @@ for pooling_method in methods_to_test:
 
 print("=" * 70)
 print("Test complete!")
+

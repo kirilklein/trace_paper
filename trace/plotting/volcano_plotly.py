@@ -89,8 +89,15 @@ def _build_hover_text(
             lines.append(f"95% CI: [{ci_low}, {ci_high}]")
             break
 
-    if pd.notna(row.get("tau2")):
-        lines.append(f"tau²: {_format_float(row.get('tau2'), '{:.2e}')}")
+    tau_candidates = (
+        ("tau2", "tau² (RD)"),
+        ("eta1_tau2", "tau² (arm1)"),
+        ("eta0_tau2", "tau² (arm0)"),
+    )
+    for col, label in tau_candidates:
+        value = row.get(col)
+        if pd.notna(value):
+            lines.append(f"{label}: {_format_float(value, '{:.2e}')}")
 
     if pd.notna(row.get("per_run_n_runs")):
         lines.append(f"Runs (per method): {int(row['per_run_n_runs'])}")

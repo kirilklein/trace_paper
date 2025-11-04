@@ -21,7 +21,7 @@ Typical workflow:
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Literal
 from scipy.stats import t as tdist, norm
 
 # -----------------------------
@@ -171,6 +171,8 @@ def pool_arm_logits(
     eta_col: str,
     se_col: str,
     out_prefix: str,
+    pooling: Literal["fixed_effect", "random_effects_hksj"] = "fixed_effect",
+    ci: float = 0.95,
 ) -> pd.DataFrame:
     """
     Pool a logit parameter across runs via inverse-variance weighting.
@@ -200,28 +202,178 @@ def pool_arm_logits(
         - n_runs_used: number of runs included
     """
 
-    def _agg(g):
-        g = g.replace([np.inf, -np.inf], np.nan).dropna(subset=[eta_col, se_col])
-        if g.empty:
+    if isinstance(group_cols, str):
+        group_cols_list: List[str] = [group_cols]
+    else:
+        group_cols_list = list(group_cols)
+
+    alpha = 1.0 - ci
+
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        cleaned = (
+            g.replace([np.inf, -np.inf], np.nan).dropna(subset=[eta_col, se_col]).copy()
+        )
+
+        m = int(cleaned.shape[0])
+        if m == 0:
             return pd.Series(
-                {out_prefix: np.nan, f"{out_prefix}_se": np.nan, "n_runs_used": 0}
+                {
+                    out_prefix: np.nan,
+                    f"{out_prefix}_se": np.nan,
+                    f"{out_prefix}_tau2": np.nan,
+                    "n_runs_used": 0,
+                    "df": np.nan,
+                    "method_used": pooling,
+                }
             )
-        w = 1.0 / (g[se_col].values ** 2)
-        eta_hat = np.sum(w * g[eta_col].values) / np.sum(w)
-        se_hat = np.sqrt(1.0 / np.sum(w))
+
+        yi = cleaned[eta_col].astype(float).values
+        sei = cleaned[se_col].astype(float).values
+        vi = sei**2
+
+        if pooling == "fixed_effect" or m == 1:
+            w = np.divide(1.0, vi, out=np.zeros_like(vi), where=vi > 0)
+            weight_sum = np.sum(w)
+            if weight_sum <= 0:
+                eta_hat = np.nan
+                se_hat = np.nan
+            else:
+                eta_hat = np.sum(w * yi) / weight_sum
+                se_hat = np.sqrt(1.0 / weight_sum)
+            return pd.Series(
+                {
+                    out_prefix: eta_hat,
+                    f"{out_prefix}_se": se_hat,
+                    f"{out_prefix}_tau2": 0.0,
+                    "n_runs_used": m,
+                    "df": np.nan if m < 2 else m - 1,
+                    "method_used": "fixed_effect"
+                    if pooling == "fixed_effect"
+                    else "single_run",
+                }
+            )
+
+        # Random-effects DL + HKSJ
+        wi = np.divide(1.0, vi, out=np.zeros_like(vi), where=vi > 0)
+        weight_sum = np.sum(wi)
+        if weight_sum <= 0:
+            return pd.Series(
+                {
+                    out_prefix: np.nan,
+                    f"{out_prefix}_se": np.nan,
+                    f"{out_prefix}_tau2": np.nan,
+                    "n_runs_used": m,
+                    "df": np.nan,
+                    "method_used": "DL_RE_HKSJ",
+                }
+            )
+
+        theta_fe = np.sum(wi * yi) / weight_sum
+        Q = np.sum(wi * (yi - theta_fe) ** 2)
+        df_q = m - 1
+        c = weight_sum - (np.sum(wi**2) / weight_sum)
+        tau2 = max((Q - df_q) / c, 0.0) if c > 0 else 0.0
+
+        w_star = np.divide(1.0, vi + tau2, out=np.zeros_like(vi), where=(vi + tau2) > 0)
+        w_star_sum = np.sum(w_star)
+        if w_star_sum <= 0:
+            eta_hat = np.nan
+            se_hk = np.nan
+        else:
+            eta_hat = np.sum(w_star * yi) / w_star_sum
+            num = np.sum(w_star * (yi - eta_hat) ** 2)
+            den = (m - 1) * w_star_sum
+            if den > 0:
+                se_hk = np.sqrt(num / den)
+            else:
+                se_hk = np.sqrt(1.0 / w_star_sum) if w_star_sum > 0 else np.nan
+
+        df_hk = m - 1 if m >= 2 else np.nan
+
         return pd.Series(
             {
                 out_prefix: eta_hat,
-                f"{out_prefix}_se": se_hat,
-                "n_runs_used": int(g.shape[0]),
+                f"{out_prefix}_se": se_hk,
+                f"{out_prefix}_tau2": tau2,
+                "n_runs_used": m,
+                "df": df_hk,
+                "method_used": "DL_RE_HKSJ",
             }
         )
 
     return (
-        df.groupby(group_cols, as_index=False)
+        df.groupby(group_cols_list, as_index=False)
         .apply(_agg, include_groups=False)
         .reset_index(drop=True)
     )
+
+
+# -----------------------------
+# Helper: logit-scale inference for pooled arms
+# -----------------------------
+def _add_logit_scale_inference(df: pd.DataFrame, ci: float = 0.95) -> pd.DataFrame:
+    """Augment pooled arm logits with logit-scale difference inference."""
+
+    if df.empty:
+        return df
+
+    alpha = 1.0 - ci
+
+    eta1 = df["eta1_pooled"].astype(float).values
+    eta0 = df["eta0_pooled"].astype(float).values
+    se1 = df["eta1_pooled_se"].astype(float).values
+    se0 = df["eta0_pooled_se"].astype(float).values
+
+    eta_diff = eta1 - eta0
+    se_diff = np.sqrt(se1**2 + se0**2)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_stat = np.divide(
+            eta_diff,
+            se_diff,
+            out=np.full_like(eta_diff, np.nan),
+            where=se_diff > 0,
+        )
+
+    df1 = df.get("eta1_df", pd.Series(np.nan, index=df.index)).astype(float).values
+    df0 = df.get("eta0_df", pd.Series(np.nan, index=df.index)).astype(float).values
+    df_logit = np.fmin(df1, df0)
+
+    p_vals = np.full_like(t_stat, np.nan)
+    tcrit = np.full_like(t_stat, np.nan)
+
+    for i, (t_val, df_val, s_val) in enumerate(zip(t_stat, df_logit, se_diff)):
+        if not np.isfinite(t_val):
+            continue
+
+        if np.isfinite(df_val) and df_val >= 1:
+            p_vals[i] = 2 * (1 - tdist.cdf(abs(t_val), df=df_val))
+            tcrit[i] = tdist.ppf(1 - alpha / 2, df=df_val)
+        else:
+            p_vals[i] = 2 * (1 - norm.cdf(abs(t_val)))
+            tcrit[i] = norm.ppf(1 - alpha / 2)
+
+        if not np.isfinite(s_val) or s_val <= 0:
+            tcrit[i] = np.nan
+
+    lo = eta_diff - tcrit * se_diff
+    hi = eta_diff + tcrit * se_diff
+
+    df = df.copy()
+    df["eta_diff"] = eta_diff
+    df["se_eta_diff"] = se_diff
+    df["df_logit"] = df_logit
+    df["t_logit"] = t_stat
+    df["p_value_logit"] = p_vals
+    df["eta_diff_CI95_lower"] = lo
+    df["eta_diff_CI95_upper"] = hi
+
+    # Preserve delta-method diagnostics but promote logit-scale inference
+    df.rename(columns={"p_value": "p_value_delta", "z": "z_delta"}, inplace=True)
+    df["p_value"] = df["p_value_logit"]
+    df["z"] = df["t_logit"]
+
+    return df
 
 
 # -----------------------------
@@ -490,16 +642,18 @@ def compute_rd_pvalues(
     Three pooling methods are available:
 
     **inverse_variance_arms (RECOMMENDED, default):**
-        Statistically principled approach that:
-        1. Transforms each arm to logit scale: eta_i = logit(p_i)
-        2. Pools each arm separately via inverse-variance weighting:
-           eta_pooled = sum(w_i * eta_i) / sum(w_i), where w_i = 1/SE_i²
-        3. Computes RD from pooled arms: RD = inv_logit(eta1) - inv_logit(eta0)
-        4. Uses Gaussian error propagation (delta method) for SE(RD):
-           Var(RD) = [p1*(1-p1)]² * Var(eta1) + [p0*(1-p0)]² * Var(eta0)
+        Logit-first random-effects workflow that:
+        1. Transforms each arm to the logit scale: ``eta = logit(p)``.
+        2. Pools each arm separately via DerSimonian–Laird random effects with
+           Hartung–Knapp–Sidik–Jonkman (HKSJ) variance adjustment.
+        3. Tests the pooled logit difference ``eta1 - eta0`` using a Wald
+           t-statistic (df = m-1 when m ≥ 2) and maps back to the probability
+           scale for point estimates (RD, RR).
+        4. Retains delta-method quantities for RD (``SE_RD`` and confidence
+           bounds) to aid interpretation on the probability scale.
 
-        This method correctly propagates uncertainty through the logit transformation
-        and accounts for different precision in each arm.
+        This approach keeps the modelling assumptions on the logit scale while
+        still reporting intuitive probability-scale summaries.
 
     **rubins_rules:**
         Alternative approach from multiple imputation literature that:
@@ -544,7 +698,9 @@ def compute_rd_pvalues(
         If group_cols specified: one row per group with pooled RD estimates
 
         Added columns include: RD, SE_RD, z, p_value, RD_CI95_lower,
-        RD_CI95_upper, p1_hat, p0_hat (p1_hat/p0_hat only for inverse_variance_arms)
+        RD_CI95_upper, p1_hat, p0_hat, eta_diff, se_eta_diff,
+        p_value_logit, eta_diff_CI95_lower, eta_diff_CI95_upper (logit
+        diagnostics only when pooling across groups).
 
     Notes
     -----
@@ -627,10 +783,49 @@ def compute_rd_pvalues(
     if verbose:
         print(f"  [DIAGNOSTIC] Pooling over groups: {group_cols}")
 
-    arm1 = pool_arm_logits(dfl, group_cols, "eta1", "se_eta1", "eta1_pooled")
-    arm0 = pool_arm_logits(dfl, group_cols, "eta0", "se_eta0", "eta0_pooled")
+    group_cols_list = [group_cols] if isinstance(group_cols, str) else list(group_cols)
 
-    pooled = pd.merge(arm1, arm0, on=group_cols, how="inner")
+    arm1 = pool_arm_logits(
+        dfl,
+        group_cols,
+        "eta1",
+        "se_eta1",
+        "eta1_pooled",
+        pooling="random_effects_hksj",
+    ).rename(
+        columns={
+            "df": "eta1_df",
+            "method_used": "eta1_method",
+            "eta1_pooled_tau2": "eta1_tau2",
+        }
+    )
+    arm0 = pool_arm_logits(
+        dfl,
+        group_cols,
+        "eta0",
+        "se_eta0",
+        "eta0_pooled",
+        pooling="random_effects_hksj",
+    ).rename(
+        columns={
+            "df": "eta0_df",
+            "method_used": "eta0_method",
+            "eta0_pooled_tau2": "eta0_tau2",
+        }
+    )
+
+    pooled = pd.merge(arm1, arm0, on=group_cols_list, how="inner")
+    pooled.rename(
+        columns={
+            "n_runs_used_x": "n_runs_arm1",
+            "n_runs_used_y": "n_runs_arm0",
+        },
+        inplace=True,
+    )
+    pooled["n_runs_shared"] = np.minimum(
+        pooled["n_runs_arm1"].fillna(0).astype(int),
+        pooled["n_runs_arm0"].fillna(0).astype(int),
+    )
 
     if verbose:
         print(f"  [DIAGNOSTIC] After pooling:")
@@ -655,6 +850,9 @@ def compute_rd_pvalues(
     )
     for k, v in res.items():
         pooled[k] = v
+
+    # Preserve delta-method diagnostics but perform inference on the logit scale
+    pooled = _add_logit_scale_inference(pooled, ci=0.95)
     return pooled
 
 

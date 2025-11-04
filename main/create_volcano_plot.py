@@ -23,7 +23,7 @@ from trace.plotting.volcano_plotly import (
     build_plotly_overlay_methods,
     save_plotly_figure,
 )
-from trace.statistics import compute_rd_pvalues, combine_random_effects_HKSJ
+from trace.statistics import compute_rd_pvalues
 
 
 # -----------------------------------------------------------------------------
@@ -31,7 +31,7 @@ from trace.statistics import compute_rd_pvalues, combine_random_effects_HKSJ
 # -----------------------------------------------------------------------------
 ESTIMATES_PATH = Path("data/semaglutide/combined_estimatest.txt")
 STATS_PATH = Path("data/semaglutide/combined_stats.txt")
-FIGURES_DIR = Path("figures")
+FIGURES_DIR = Path("figures_new")
 MATPLOTLIB_ALPHA = 0.05
 PLOTLY_ALPHA = 0.05
 METHODS_WITH_ARMS = ("IPW", "TMLE")
@@ -470,17 +470,29 @@ def main() -> None:
         verbose=False,
     )
 
-    df_pooled = combine_random_effects_HKSJ(
-        df_per_run, group_cols=("method", "outcome")
+    df_pooled = compute_rd_pvalues(
+        df_with_arms,
+        group_cols=("method", "outcome"),
+        pooling_method="inverse_variance_arms",
+        verbose=False,
     )
     print(f"Computed {len(df_pooled)} method-outcome combinations")
 
-    if "tau2" in df_pooled.columns:
+    if "eta1_tau2" in df_pooled.columns or "RD" in df_pooled.columns:
         print("\nHeterogeneity statistics (tau²):")
-        print(f"  Mean tau²: {df_pooled['tau2'].mean():.4e}")
-        print(f"  Median tau²: {df_pooled['tau2'].median():.4e}")
-        print(f"  Max tau²: {df_pooled['tau2'].max():.4e}")
-        n_heterogeneous = (df_pooled["tau2"] > 0.01).sum()
+        tau_cols = [c for c in ["eta1_tau2", "eta0_tau2"] if c in df_pooled.columns]
+        if tau_cols:
+            for col in tau_cols:
+                print(
+                    f"  {col}: mean={df_pooled[col].mean():.4e}, max={df_pooled[col].max():.4e}"
+                )
+        if "tau2" in df_pooled.columns:
+            print(f"  Mean tau²: {df_pooled['tau2'].mean():.4e}")
+            print(f"  Median tau²: {df_pooled['tau2'].median():.4e}")
+            print(f"  Max tau²: {df_pooled['tau2'].max():.4e}")
+            n_heterogeneous = (df_pooled["tau2"] > 0.01).sum()
+        else:
+            n_heterogeneous = 0
         print(
             f"  Cases with substantial heterogeneity (tau² > 0.01): {n_heterogeneous}"
         )
@@ -554,10 +566,6 @@ def main() -> None:
         fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
         print(f"Saved overlay plot to: {overlay_png}")
 
-        overlay_pdf = FIGURES_DIR / "volcano_plot_tmle_ipw_overlay.pdf"
-        fig_overlay.savefig(overlay_pdf, bbox_inches="tight")
-        print(f"Saved overlay plot to: {overlay_pdf}")
-
         plt.close(fig_overlay)
 
     print("\nCreating TMLE vs IPW overlay plot (interactive)...")
@@ -603,10 +611,6 @@ def main() -> None:
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
     print(f"\nSaved plot to: {output_path_png}")
 
-    output_path_pdf = FIGURES_DIR / "volcano_plot.pdf"
-    fig.savefig(output_path_pdf, bbox_inches="tight")
-    print(f"Saved plot to: {output_path_pdf}")
-
     plt.show()
 
     print("\n" + "=" * 70)
@@ -647,10 +651,6 @@ def main() -> None:
     fig_trunc.savefig(output_path_trunc_png, dpi=300, bbox_inches="tight")
     print(f"Saved truncated plot to: {output_path_trunc_png}")
 
-    output_path_trunc_pdf = FIGURES_DIR / "volcano_plot_truncated.pdf"
-    fig_trunc.savefig(output_path_trunc_pdf, bbox_inches="tight")
-    print(f"Saved truncated plot to: {output_path_trunc_pdf}")
-
     plt.show()
 
     print("\nCreating interactive Plotly volcano plot...")
@@ -662,10 +662,8 @@ def main() -> None:
     )
 
     plotly_html = FIGURES_DIR / "volcano_plot_interactive.html"
-    plotly_png = FIGURES_DIR / "volcano_plot_interactive.png"
-    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=plotly_png)
+    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
     print(f"Saved interactive plot to: {plotly_html}")
-    print(f"Saved interactive snapshot to: {plotly_png}")
 
     print("\nDone!")
 
