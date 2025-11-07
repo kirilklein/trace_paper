@@ -8,6 +8,8 @@ from typing import Dict, Iterable
 
 import pandas as pd
 
+from trace.constants import PREVALENCE_COLUMN_RENAME_MAP
+
 _PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_ATC_DICT_PATH = _PACKAGE_DIR.parent / "helper_data" / "atc_dict.txt"
 DEFAULT_COMBINED_STATS_PATH = (
@@ -154,9 +156,78 @@ def load_prevalence_statistics(
     return PrevalenceStats(raw=raw, summary=summary)
 
 
+def load_estimates(path: str | Path) -> pd.DataFrame:
+    """Load arm-level effect estimates from CSV file.
+
+    Drops any unnamed columns that may have been added during export.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to the estimates CSV file
+
+    Returns
+    -------
+    pd.DataFrame
+        Loaded estimates with unnamed columns removed
+    """
+    df = pd.read_csv(path)
+    unnamed_cols = [col for col in df.columns if col.startswith("Unnamed")]
+    if unnamed_cols:
+        df = df.drop(columns=unnamed_cols)
+    return df
+
+
+def filter_methods_with_arm_cis(
+    df: pd.DataFrame, methods: Iterable[str]
+) -> pd.DataFrame:
+    """Restrict the dataframe to methods providing arm-level confidence intervals.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe with a 'method' column
+    methods : Iterable[str]
+        Methods to keep
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered dataframe containing only specified methods
+    """
+    return df[df["method"].isin(list(methods))].copy()
+
+
+def rename_prevalence_columns(summary: pd.DataFrame) -> pd.DataFrame:
+    """Rename prevalence summary columns to shorter, more convenient names.
+
+    Uses the mapping defined in trace.constants.PREVALENCE_COLUMN_RENAME_MAP.
+
+    Parameters
+    ----------
+    summary : pd.DataFrame
+        Prevalence summary dataframe from PrevalenceStats.summary
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with renamed columns
+    """
+    return summary.rename(
+        columns={
+            k: v
+            for k, v in PREVALENCE_COLUMN_RENAME_MAP.items()
+            if k in summary.columns
+        }
+    )
+
+
 __all__ = [
     "load_atc_dictionary",
     "load_prevalence_statistics",
+    "load_estimates",
+    "filter_methods_with_arm_cis",
+    "rename_prevalence_columns",
     "DEFAULT_ATC_DICT_PATH",
     "DEFAULT_COMBINED_STATS_PATH",
     "PrevalenceStats",
