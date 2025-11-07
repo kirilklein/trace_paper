@@ -214,6 +214,13 @@ class TestPrepareVolcanoData(unittest.TestCase):
         self.assertIn("RD", result.columns)
         self.assertIn("p_value", result.columns)
 
+    def test_effect_alias(self):
+        """Effect alias should rename the output column."""
+        result = prepare_volcano_data(self.df, effect_alias="Effect Size")
+
+        self.assertIn("Effect Size", result.columns)
+        self.assertNotIn("RD", result.columns)
+
     def test_p_floor_prevents_inf(self):
         """Test that p_floor prevents infinite -log10(p)."""
         df = pd.DataFrame(
@@ -389,6 +396,29 @@ class TestVolcanoPlot(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             volcano_plot_per_method(empty_df)
+
+    def test_custom_effect_parameters(self):
+        """Custom effect column and label should be honoured."""
+        df = pd.DataFrame(
+            {
+                "method": ["IPW", "IPW", "IPW"],
+                "outcome": ["A", "B", "C"],
+                "RR": [0.8, 1.0, 1.2],
+                "p_value": [0.02, 0.05, 0.10],
+                "q_value": [0.03, 0.05, 0.12],
+                "neglog10p": [-np.log10(0.02), -np.log10(0.05), -np.log10(0.10)],
+            }
+        )
+
+        fig, axes = volcano_plot_per_method(
+            df,
+            effect_col="RR",
+            effect_label="Risk ratio (RR)",
+            null_value=1.0,
+        )
+
+        self.assertEqual(axes[0].get_xlabel(), "Risk ratio (RR)")
+        plt.close(fig)
 
 
 class TestIntegration(unittest.TestCase):

@@ -102,13 +102,15 @@ pooled_columns = [
     "p_value",
     "RD_CI95_lower",
     "RD_CI95_upper",
-    "n_runs_used_x",
-    "n_runs_used_y",
+    "eta_diff",
+    "se_eta_diff",
+    "p_value_logit",
+    "n_runs_arm1",
+    "n_runs_arm0",
+    "n_runs_shared",
 ]
 print("\nPooled RD p-values per (method, outcome):")
-pooled_display = pooled[pooled_columns].rename(
-    columns={"n_runs_used_x": "n_runs_arm1", "n_runs_used_y": "n_runs_arm0"}
-)
+pooled_display = pooled[pooled_columns]
 print(pooled_display.to_string(index=False))
 
 # Interpretation
