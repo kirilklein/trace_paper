@@ -468,28 +468,55 @@ def main() -> None:
 
     ensure_output_directory(args.output_dir)
 
-    # Save confusion matrix
+    # Save confusion matrix as heatmap
     if confusion_result:
         confusion_df, agreement, n_overlap = confusion_result
-        confusion_csv = (
-            args.output_dir / f"tmle_ipw_significance_confusion_{output_suffix}.csv"
-        )
-        confusion_df.to_csv(confusion_csv)
-        print(f"Saved confusion matrix to: {confusion_csv}")
 
-        summary_path = (
-            args.output_dir
-            / f"tmle_ipw_significance_confusion_{output_suffix}_summary.txt"
+        # Create sklearn-style confusion matrix heatmap
+        fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+        im = ax_cm.imshow(confusion_df.values, cmap="Blues", aspect="auto")
+
+        # Add colorbar
+        plt.colorbar(im, ax=ax_cm)
+
+        # Set ticks and labels
+        ax_cm.set_xticks([0, 1])
+        ax_cm.set_yticks([0, 1])
+        ax_cm.set_xticklabels(["No", "Yes"])
+        ax_cm.set_yticklabels(["No", "Yes"])
+
+        # Add text annotations
+        for i in range(2):
+            for j in range(2):
+                ax_cm.text(
+                    j,
+                    i,
+                    int(confusion_df.values[i, j]),
+                    ha="center",
+                    va="center",
+                    color="white"
+                    if confusion_df.values[i, j] > confusion_df.values.max() / 2
+                    else "black",
+                    fontsize=16,
+                    fontweight="bold",
+                )
+
+        # Labels and title
+        ax_cm.set_xlabel("IPW Significant", fontsize=12, fontweight="bold")
+        ax_cm.set_ylabel("TMLE Significant", fontsize=12, fontweight="bold")
+        ax_cm.set_title(
+            f"Significance Agreement\n{agreement * 100:.1f}% (n={n_overlap})",
+            fontsize=13,
+            fontweight="bold",
+            pad=10,
         )
-        summary_lines = [
-            f"Effect type: {effect_type}",
-            f"Agreement: {agreement * 100:.1f}%",
-            f"Overlapping outcomes: {n_overlap}",
-            "Rows: TMLE significant (No/Yes)",
-            "Columns: IPW significant (No/Yes)",
-        ]
-        summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-        print(f"Saved confusion matrix summary to: {summary_path}")
+
+        plt.tight_layout()
+
+        confusion_png = args.output_dir / f"confusion_matrix_{output_suffix}.png"
+        fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
+        print(f"Saved confusion matrix to: {confusion_png}")
+        plt.close(fig_cm)
 
     outcome_label_map = (
         df_volcano_enriched.dropna(subset=["outcome_label"])
@@ -540,20 +567,12 @@ def main() -> None:
             args.output_dir
             / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
         )
-        overlay_png = (
-            args.output_dir
-            / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.png"
-        )
         save_plotly_figure(
             plotly_overlay,
             html_path=overlay_html,
-            png_path=overlay_png,
-            width=900,
-            height=600,
-            scale=2.0,
+            png_path=None,
         )
         print(f"Saved interactive overlay to: {overlay_html}")
-        print(f"Saved interactive overlay snapshot to: {overlay_png}")
     except ValueError as err:
         print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
 
@@ -582,8 +601,6 @@ def main() -> None:
     output_path_pdf = args.output_dir / f"volcano_plot_{output_suffix}.pdf"
     fig.savefig(output_path_pdf, bbox_inches="tight")
     print(f"Saved plot to: {output_path_pdf}")
-
-    plt.show()
 
     # Create truncated plot for RD only (to exclude extreme p-values)
     if effect_type == "RD":
@@ -630,8 +647,6 @@ def main() -> None:
         fig_trunc.savefig(output_path_trunc_png, dpi=300, bbox_inches="tight")
         print(f"Saved truncated plot to: {output_path_trunc_png}")
 
-        plt.show()
-
     # Create interactive plot (Plotly)
     print("\nCreating interactive Plotly volcano plot...")
     plotly_fig = build_plotly_volcano(
@@ -646,10 +661,8 @@ def main() -> None:
     )
 
     plotly_html = args.output_dir / f"volcano_plot_{output_suffix}_interactive.html"
-    plotly_png = args.output_dir / f"volcano_plot_{output_suffix}_interactive.png"
-    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=plotly_png)
+    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
     print(f"Saved interactive plot to: {plotly_html}")
-    print(f"Saved interactive snapshot to: {plotly_png}")
 
     print("\nDone!")
 
