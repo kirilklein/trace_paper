@@ -68,6 +68,89 @@ def ensure_required_columns(df: pd.DataFrame, required: Iterable[str]) -> None:
         print(f"  {col}: {n_missing} missing values")
 
 
+def print_significance_confusion_matrix(
+    df: pd.DataFrame,
+    *,
+    methods: tuple[str, str],
+    method_col: str = "method",
+    outcome_col: str = "outcome",
+    q_col: str = "q_value",
+    alpha: float = MATPLOTLIB_ALPHA,
+    return_confusion: bool = False,
+) -> tuple[pd.DataFrame, float, int] | None:
+    """Print a confusion matrix comparing significance across two methods.
+
+    When ``return_confusion`` is ``True``, the function additionally returns a
+    tuple containing the formatted confusion matrix, the agreement proportion,
+    and the number of overlapping outcomes used to build the matrix.
+    """
+
+    if len(methods) != 2:
+        raise ValueError(
+            "Exactly two methods are required to build the confusion matrix."
+        )
+
+    df_subset = (
+        df[df[method_col].isin(methods)][[outcome_col, method_col, q_col]]
+        .dropna(subset=[q_col])
+        .copy()
+    )
+
+    if df_subset.empty:
+        print("  No outcomes with valid q-values for the requested methods.")
+        return None
+
+    df_subset["is_significant"] = df_subset[q_col] < alpha
+
+    pivot = df_subset.pivot_table(
+        index=outcome_col,
+        columns=method_col,
+        values="is_significant",
+        aggfunc="first",
+    )
+
+    missing = [method for method in methods if method not in pivot.columns]
+    if missing:
+        print(
+            "  Missing methods in results: "
+            + ", ".join(missing)
+            + ". Not enough overlap to build the confusion matrix."
+        )
+        return None
+
+    pivot = pivot.dropna(subset=list(methods))
+
+    if pivot.empty:
+        print("  No overlapping outcomes between the selected methods.")
+        return None
+
+    method_a, method_b = methods
+    confusion = pd.crosstab(
+        pivot[method_a],
+        pivot[method_b],
+        rownames=[f"{method_a} significant"],
+        colnames=[f"{method_b} significant"],
+        dropna=False,
+    )
+
+    confusion = confusion.reindex(
+        index=[False, True], columns=[False, True], fill_value=0
+    )
+
+    formatted = confusion.rename(
+        index={False: "No", True: "Yes"}, columns={False: "No", True: "Yes"}
+    )
+    print(formatted.to_string())
+
+    agreement = (pivot[method_a] == pivot[method_b]).mean()
+    print(f"  Agreement: {agreement * 100:.1f}% (n={len(pivot)})")
+
+    if return_confusion:
+        return formatted.copy(), agreement, len(pivot)
+
+    return None
+
+
 def summarise_per_run_effects(
     df_per_run: pd.DataFrame,
     *,
@@ -538,7 +621,34 @@ def main() -> None:
             f"  {method}: {len(d)} outcomes, {n_sig} significant (q < {MATPLOTLIB_ALPHA})"
         )
 
+    print("\nTMLE vs IPW significance confusion matrix:")
+    confusion_result = print_significance_confusion_matrix(
+        df_volcano_enriched,
+        methods=("TMLE", "IPW"),
+        method_col="method",
+        outcome_col="outcome",
+        q_col="q_value",
+        alpha=MATPLOTLIB_ALPHA,
+        return_confusion=True,
+    )
+
     ensure_output_directory(FIGURES_DIR)
+
+    if confusion_result:
+        confusion_df, agreement, n_overlap = confusion_result
+        confusion_csv = FIGURES_DIR / "tmle_ipw_significance_confusion.csv"
+        confusion_df.to_csv(confusion_csv)
+        print(f"Saved TMLE vs IPW significance confusion matrix to: {confusion_csv}")
+
+        summary_path = FIGURES_DIR / "tmle_ipw_significance_confusion_summary.txt"
+        summary_lines = [
+            f"Agreement: {agreement * 100:.1f}%",
+            f"Overlapping outcomes: {n_overlap}",
+            "Rows: TMLE significant (No/Yes)",
+            "Columns: IPW significant (No/Yes)",
+        ]
+        summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+        print(f"Saved confusion matrix summary to: {summary_path}")
 
     outcome_label_map = (
         df_volcano_enriched.dropna(subset=["outcome_label"])
