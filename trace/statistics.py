@@ -247,9 +247,9 @@ def pool_arm_logits(
                     f"{out_prefix}_tau2": 0.0,
                     "n_runs_used": m,
                     "df": np.nan if m < 2 else m - 1,
-                    "method_used": "fixed_effect"
-                    if pooling == "fixed_effect"
-                    else "single_run",
+                    "method_used": (
+                        "fixed_effect" if pooling == "fixed_effect" else "single_run"
+                    ),
                 }
             )
 

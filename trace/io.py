@@ -9,7 +9,7 @@ from typing import Dict, Iterable
 import pandas as pd
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
-DEFAULT_ATC_DICT_PATH = _PACKAGE_DIR.parent / "data" / "atc_dict.txt"
+DEFAULT_ATC_DICT_PATH = _PACKAGE_DIR.parent / "helper_data" / "atc_dict.txt"
 DEFAULT_COMBINED_STATS_PATH = (
     _PACKAGE_DIR.parent / "data" / "semaglutide" / "combined_stats.txt"
 )
