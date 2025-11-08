@@ -171,7 +171,8 @@ plt.show()
 print("\n" + "=" * 80)
 print("SUMMARY")
 print("=" * 80)
-print("""
+print(
+    """
 Volcano plots are useful for:
   1. Visualizing many outcomes simultaneously
   2. Identifying outcomes with large AND significant effects
@@ -184,4 +185,5 @@ Best practices:
   - Use Bonferroni when false positives are very costly
   - Label and investigate top hits
   - Consider biological/clinical significance, not just statistical
-""")
+"""
+)

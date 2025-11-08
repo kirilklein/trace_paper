@@ -127,7 +127,8 @@ print("  - TMLE: RD = 0.0105, p = 0.0005")
 print("\n" + "=" * 80)
 print("SUMMARY")
 print("=" * 80)
-print("""
+print(
+    """
 This example demonstrated:
 
 1. Per-run analysis: Compute RD and p-values for each individual run
@@ -142,4 +143,5 @@ This example demonstrated:
 The pooled approach is generally preferred when you have multiple runs
 of the same analysis and want to make overall inferences about the
 treatment effect.
-""")
+"""
+)
