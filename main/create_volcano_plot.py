@@ -41,11 +41,7 @@ from trace.plotting.volcano_plotly import (
     build_plotly_volcano,
     save_plotly_figure,
 )
-from trace.statistics import (
-    combine_rr_random_effects_HKSJ,
-    compute_rd_pvalues,
-    compute_rr_from_arm_estimates,
-)
+from trace.statistics import compute_rd_pvalues
 
 
 # -----------------------------------------------------------------------------
@@ -138,15 +134,33 @@ def main() -> None:
 
     # Compute effects based on type
     if effect_type in ["RR", "log-RR"]:
-        print("\nComputing per-run risk ratios...")
-        df_per_run = compute_rr_from_arm_estimates(
-            df_with_arms, group_cols=None, verbose=False
+        # Synchronize inference with RD: use pooled logit-difference p-values
+        # and derive RR for the effect axis.
+        print(
+            "\nComputing per-run RD pipeline outputs (for metadata and per-run RR)..."
         )
+        df_per_run = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=None,
+            pooling_method="inverse_variance_arms",
+            verbose=False,
+        )
+        # Derive per-run RR from arm probabilities
+        if not df_per_run.empty:
+            df_per_run = df_per_run.copy()
+            df_per_run["RR"] = df_per_run["p1_hat"] / df_per_run["p0_hat"]
 
-        print("Pooling risk ratios with DL + HKSJ adjustment...")
-        df_pooled = combine_rr_random_effects_HKSJ(
-            df_per_run, group_cols=("method", "outcome")
+        print("Pooling arm logits and computing shared logit-difference p-values...")
+        df_pooled = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=("method", "outcome"),
+            pooling_method="inverse_variance_arms",
+            verbose=False,
         )
+        # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
+        if not df_pooled.empty:
+            df_pooled = df_pooled.copy()
+            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
         if df_pooled.empty:
