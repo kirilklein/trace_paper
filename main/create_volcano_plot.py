@@ -42,6 +42,7 @@ from trace.plotting.volcano_plotly import (
     save_plotly_figure,
 )
 from trace.statistics import compute_rd_pvalues
+from trace.plotting.correlation import plot_method_correlation
 
 
 # -----------------------------------------------------------------------------
@@ -343,6 +344,34 @@ def main() -> None:
         print(f"Saved interactive overlay to: {overlay_html}")
     except ValueError as err:
         print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+
+    # Create IPW vs TMLE correlation plot for the chosen effect
+    print("\nCreating IPW vs TMLE correlation plot...")
+    try:
+        # For log-RR, display correlation on log10 scale (linear axes), for clarity
+        corr_transform = "log10" if xscale in {"log"} else None
+        fig_corr, ax_corr = plot_method_correlation(
+            df_volcano_enriched,
+            methods=("IPW", "TMLE"),
+            method_col="method",
+            outcome_col="outcome",
+            effect_col=effect_col,
+            effect_label=effect_label,
+            xscale="linear",
+            transform=corr_transform,
+            clip_quantiles=(0.005, 0.995),
+            hexbin=False,
+            point_size=22,
+            alpha=0.65,
+            significance_col="q_value",
+            alpha_threshold=DEFAULT_ALPHA,
+        )
+        corr_png = args.output_dir / f"correlation_{output_suffix}.png"
+        fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
+        print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
+        plt.close(fig_corr)
+    except ValueError as err:
+        print(f"Skipping correlation plot: {err}")
 
     # Create main volcano plot (Matplotlib)
     print("\nCreating volcano plot...")
