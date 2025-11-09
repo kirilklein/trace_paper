@@ -165,13 +165,107 @@ def add_logit_arm_metrics(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------
 # Step B: inverse-variance pool arm logits (optional)
 # -----------------------------
+def correlation_adjusted_arm_pool(
+    theta: np.ndarray,
+    var: np.ndarray,
+    *,
+    weights: Optional[np.ndarray] = None,
+    rho: Optional[float] = None,
+) -> tuple[float, float, float, float, float, float]:
+    """
+    Correlation-aware pooling of repeated refits (arm-level, logit scale).
+
+    Implements weighted pooling with correlation adjustment:
+      - Normalized weights w_i = n_i / sum n_i (if `weights` provided) or equal weights
+      - Pooled mean: Theta = sum_i w_i * theta_i
+      - Within component: W = sum_i w_i * v_i
+      - Weighted between-run variance (unbiased):
+            S^2 = sum_i w_i (theta_i - Theta)^2 / (1 - sum_i w_i^2)
+      - Effective number of runs:
+            B_eff = 1 / [ rho + (1 - rho) * sum_i w_i^2 ]
+      - Total variance: V = W + (1 + 1/B_eff) * S^2
+      - SE = sqrt(V)
+      - Barnard–Rubin-style df:
+            nu = (B_eff - 1) * [ 1 + W / ( (1 + 1/B_eff) * S^2 ) ]^2
+
+    If S^2 ≈ 0, uses normal (z) approximation with df = inf.
+
+    Parameters
+    ----------
+    theta : np.ndarray
+        Per-run point estimates on the logit scale.
+    var : np.ndarray
+        Per-run variances on the logit scale (SE^2).
+    weights : np.ndarray, optional
+        Nonnegative run weights (e.g., run sizes); defaults to equal weights.
+    rho : float, optional
+        Assumed common correlation among run estimates in [0, 1]; defaults to 0.
+
+    Returns
+    -------
+    tuple
+        (Theta, SE, df, W, S2, B_eff)
+    """
+    yi = np.asarray(theta, dtype=float)
+    vi = np.asarray(var, dtype=float)
+    m = yi.shape[0]
+
+    if m == 0 or np.all(~np.isfinite(yi)) or np.all(~np.isfinite(vi)):
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    if weights is None:
+        raw_w = np.ones_like(yi, dtype=float)
+    else:
+        raw_w = np.asarray(weights, dtype=float)
+        raw_w = np.where(np.isfinite(raw_w) & (raw_w > 0), raw_w, 0.0)
+
+    total_w = np.sum(raw_w)
+    if not np.isfinite(total_w) or total_w <= 0:
+        raw_w = np.ones_like(yi, dtype=float)
+        total_w = float(m)
+    w = raw_w / total_w
+
+    Theta = float(np.sum(w * yi))
+    W = float(np.sum(w * vi))
+
+    ww2 = float(np.sum(w**2))
+    denom = 1.0 - ww2
+    if denom > 0:
+        S2 = float(np.sum(w * (yi - Theta) ** 2) / denom)
+    else:
+        S2 = 0.0
+
+    rho_eff = 0.0 if rho is None else float(rho)
+    rho_eff = float(np.clip(rho_eff, 0.0, 1.0))
+    beff_denom = rho_eff + (1.0 - rho_eff) * ww2
+    if beff_denom <= 0:
+        B_eff = 1.0
+    else:
+        B_eff = 1.0 / beff_denom
+
+    V = W + (1.0 + 1.0 / B_eff) * S2
+    SE = float(np.sqrt(V)) if V >= 0 else np.nan
+
+    if S2 <= 0 or not np.isfinite(S2):
+        df = float(np.inf)
+    else:
+        df = float((B_eff - 1.0) * (1.0 + W / ((1.0 + 1.0 / B_eff) * S2)) ** 2)
+
+    return Theta, SE, df, W, S2, B_eff
+
+
 def pool_arm_logits(
     df: pd.DataFrame,
     group_cols: Union[str, List[str]],
     eta_col: str,
     se_col: str,
     out_prefix: str,
-    pooling: Literal["fixed_effect", "random_effects_hksj"] = "fixed_effect",
+    pooling: Literal[
+        "fixed_effect", "random_effects_hksj", "correlation_adjusted"
+    ] = "fixed_effect",
+    *,
+    rho: Optional[float] = None,
+    weight_col: Optional[str] = None,
     ci: float = 0.95,
 ) -> pd.DataFrame:
     """
@@ -250,6 +344,24 @@ def pool_arm_logits(
                     "method_used": (
                         "fixed_effect" if pooling == "fixed_effect" else "single_run"
                     ),
+                }
+            )
+
+        if pooling == "correlation_adjusted":
+            raw_w = None
+            if weight_col is not None and (weight_col in cleaned.columns):
+                raw_w = cleaned[weight_col].astype(float).values
+            res_theta, res_se, res_df, _, _, _ = correlation_adjusted_arm_pool(
+                yi, vi, weights=raw_w, rho=rho
+            )
+            return pd.Series(
+                {
+                    out_prefix: res_theta,
+                    f"{out_prefix}_se": res_se,
+                    f"{out_prefix}_tau2": np.nan,
+                    "n_runs_used": m,
+                    "df": res_df,
+                    "method_used": "correlation_adjusted",
                 }
             )
 
@@ -628,6 +740,8 @@ def compute_rd_pvalues(
     group_cols: Optional[Union[str, List[str]]] = None,
     pooling_method: str = "inverse_variance_arms",
     arm_pooling: Literal["fixed_effect", "random_effects_hksj"] = "random_effects_hksj",
+    arm_pooling_rho: Optional[float] = None,
+    arm_weight_col: Optional[str] = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """
@@ -761,6 +875,8 @@ def compute_rd_pvalues(
         "se_eta1",
         "eta1_pooled",
         pooling=arm_pooling,
+        rho=arm_pooling_rho,
+        weight_col=arm_weight_col,
     ).rename(
         columns={
             "df": "eta1_df",
@@ -775,6 +891,8 @@ def compute_rd_pvalues(
         "se_eta0",
         "eta0_pooled",
         pooling=arm_pooling,
+        rho=arm_pooling_rho,
+        weight_col=arm_weight_col,
     ).rename(
         columns={
             "df": "eta0_df",
