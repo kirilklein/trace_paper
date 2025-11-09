@@ -627,6 +627,7 @@ def compute_rd_pvalues(
     df: pd.DataFrame,
     group_cols: Optional[Union[str, List[str]]] = None,
     pooling_method: str = "inverse_variance_arms",
+    arm_pooling: Literal["fixed_effect", "random_effects_hksj"] = "random_effects_hksj",
     verbose: bool = False,
 ) -> pd.DataFrame:
     """
@@ -637,42 +638,15 @@ def compute_rd_pvalues(
     2. Either compute per-row RDs or pool by group then compute RDs
     3. Return DataFrame with RD estimates and inference
 
-    Pooling Methodology
-    -------------------
-    Three pooling methods are available:
+    Arm-level pooling (selected via ``arm_pooling``)
+    -----------------------------------------------
+    The pipeline pools on the logit scale per arm, then performs a Wald
+    t-test on the pooled logit difference and maps back to probabilities.
 
-    **inverse_variance_arms (RECOMMENDED, default):**
-        Logit-first random-effects workflow that:
-        1. Transforms each arm to the logit scale: ``eta = logit(p)``.
-        2. Pools each arm separately via DerSimonian–Laird random effects with
-           Hartung–Knapp–Sidik–Jonkman (HKSJ) variance adjustment.
-        3. Tests the pooled logit difference ``eta1 - eta0`` using a Wald
-           t-statistic (df = m-1 when m ≥ 2) and maps back to the probability
-           scale for point estimates (RD, RR).
-        4. Retains delta-method quantities for RD (``SE_RD`` and confidence
-           bounds) to aid interpretation on the probability scale.
-
-        This approach keeps the modelling assumptions on the logit scale while
-        still reporting intuitive probability-scale summaries.
-
-    **rubins_rules:**
-        Alternative approach from multiple imputation literature that:
-        1. Computes per-run RDs first
-        2. Pools RDs using Rubin's rules: T = W_bar + (1 + 1/m) * B
-           where W_bar = within-run variance, B = between-run variance
-        3. Uses t-distribution with Barnard-Rubin degrees of freedom
-
-        Useful for sensitivity analysis or when runs represent multiple imputations.
-        Accounts for between-run variability but ignores arm-level structure.
-
-    **random_effects_dl:**
-        Random effects meta-analysis (DerSimonian-Laird) that:
-        1. Computes per-run RDs first
-        2. Estimates between-run heterogeneity (tau²)
-        3. Pools using weights: w_i* = 1 / (SE_i² + tau²)
-
-        Appropriate when substantial heterogeneity exists across runs.
-        Ignores arm-level structure.
+    ``arm_pooling`` controls the arm-level pooling strategy:
+      - ``\"random_effects_hksj\"`` (default): DerSimonian–Laird RE with
+        Hartung–Knapp–Sidik–Jonkman standard errors
+      - ``\"fixed_effect\"``: inverse-variance fixed-effect pooling
 
     Parameters
     ----------
@@ -684,10 +658,10 @@ def compute_rd_pvalues(
         If None, compute per-row RDs. If specified, pool within each group
         (e.g., ["method", "outcome"]) before computing RDs.
     pooling_method : str, optional
-        Method for pooling across runs (default: "inverse_variance_arms"):
-        - "inverse_variance_arms": Principled arm-level pooling (recommended)
-        - "rubins_rules": Rubin's rules on RDs (for sensitivity analysis)
-        - "random_effects_dl": DL random effects on RDs (for heterogeneity)
+        Legacy switch for alternative RD-level poolers. Left for compatibility;
+        the pipeline uses only arm-level pooling by default.
+    arm_pooling : {\"fixed_effect\", \"random_effects_hksj\"}, optional
+        Arm-level pooling method to use on the logit scale (default: RE+HKSJ).
     verbose : bool, optional
         If True, print diagnostic information during computation (default: False)
 
@@ -704,14 +678,9 @@ def compute_rd_pvalues(
 
     Notes
     -----
-    The inverse_variance_arms method is recommended because it:
-    - Preserves the arm-level structure of the data
-    - Correctly propagates uncertainty through transformations
-    - Accounts for potentially different precision in each arm
-    - Follows standard practice for pooling probability estimates
-
-    Alternative methods (rubins_rules, random_effects_dl) are provided for
-    sensitivity analysis and may be appropriate in specific scenarios.
+    Arm-level pooling preserves arm structure and propagates uncertainty
+    correctly through transformations. RD-level poolers are retained for
+    sensitivity only and are not exposed via CLI.
 
     Examples
     --------
@@ -791,7 +760,7 @@ def compute_rd_pvalues(
         "eta1",
         "se_eta1",
         "eta1_pooled",
-        pooling="random_effects_hksj",
+        pooling=arm_pooling,
     ).rename(
         columns={
             "df": "eta1_df",
@@ -805,7 +774,7 @@ def compute_rd_pvalues(
         "eta0",
         "se_eta0",
         "eta0_pooled",
-        pooling="random_effects_hksj",
+        pooling=arm_pooling,
     ).rename(
         columns={
             "df": "eta0_df",

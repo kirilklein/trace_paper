@@ -104,6 +104,17 @@ def main() -> None:
         help="Scope of multiple testing adjustment",
     )
 
+    parser.add_argument(
+        "--arm-pooling",
+        choices=["random_effects_hksj", "fixed_effect"],
+        default="random_effects_hksj",
+        help=(
+            "Arm-level pooling on the logit scale across runs: "
+            "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
+            "'fixed_effect' (inverse-variance fixed effect)"
+        ),
+    )
+
     args = parser.parse_args()
 
     # Construct file paths
@@ -168,7 +179,7 @@ def main() -> None:
         df_per_run = compute_rd_pvalues(
             df_with_arms,
             group_cols=None,
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
             verbose=False,
         )
         # Derive per-run RR from arm probabilities
@@ -180,7 +191,7 @@ def main() -> None:
         df_pooled = compute_rd_pvalues(
             df_with_arms,
             group_cols=("method", "outcome"),
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
             verbose=False,
         )
         # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
@@ -202,15 +213,15 @@ def main() -> None:
         df_per_run = compute_rd_pvalues(
             df_with_arms,
             group_cols=None,
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
             verbose=False,
         )
 
-        print("Pooling risk differences using inverse variance on arms...")
+        print("Pooling across runs using arm-level pooling on the logit scale...")
         df_pooled = compute_rd_pvalues(
             df_with_arms,
             group_cols=("method", "outcome"),
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
             verbose=False,
         )
         print(f"Computed {len(df_pooled)} method-outcome combinations")
