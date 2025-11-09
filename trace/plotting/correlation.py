@@ -73,7 +73,9 @@ def plot_method_correlation(
 
     method_x, method_y = methods
 
-    subset = df[[outcome_col, method_col, effect_col]].dropna(subset=[effect_col]).copy()
+    subset = (
+        df[[outcome_col, method_col, effect_col]].dropna(subset=[effect_col]).copy()
+    )
     subset = subset[subset[method_col].isin([method_x, method_y])]
 
     if subset.empty:
@@ -164,7 +166,7 @@ def plot_method_correlation(
         if sign_x is not None and sign_y is not None:
             # Category colors
             color_defaults = {
-                "both_ns": "#000000",   # black
+                "both_ns": "#000000",  # black
                 "discordant": "#999999",  # grey
                 "both_sig": "#d62728",  # red
             }
@@ -212,7 +214,11 @@ def plot_method_correlation(
                     label=f"Both significant (n={int(both_sig.sum())})",
                 )
             if show_legend:
-                ax.legend(frameon=True, fontsize=9, title=f"Significance @ α={alpha_threshold:g}")
+                ax.legend(
+                    frameon=True,
+                    fontsize=9,
+                    title=f"Significance @ α={alpha_threshold:g}",
+                )
         else:
             ax.scatter(
                 x[keep],
@@ -233,7 +239,15 @@ def plot_method_correlation(
             pad = 0.02 * (lim_max - lim_min) if np.isfinite(lim_max - lim_min) else 0.0
             lo = lim_min - pad
             hi = lim_max + pad
-            ax.plot([lo, hi], [lo, hi], linestyle="--", color="#888888", linewidth=1.0, alpha=0.7, zorder=1)
+            ax.plot(
+                [lo, hi],
+                [lo, hi],
+                linestyle="--",
+                color="#888888",
+                linewidth=1.0,
+                alpha=0.7,
+                zorder=1,
+            )
             ax.set_xlim(lo, hi)
             ax.set_ylim(lo, hi)
 
@@ -241,7 +255,14 @@ def plot_method_correlation(
     if finite_mask.sum() >= 2:
         slope, intercept = np.polyfit(x[finite_mask], y[finite_mask], 1)
         xs = np.array(ax.get_xlim())
-        ax.plot(xs, slope * xs + intercept, color="#E45756", linewidth=1.3, alpha=0.9, zorder=2)
+        ax.plot(
+            xs,
+            slope * xs + intercept,
+            color="#E45756",
+            linewidth=1.3,
+            alpha=0.9,
+            zorder=2,
+        )
 
     xlabel = (effect_label or effect_col) + label_suffix
     ylabel = (effect_label or effect_col) + label_suffix
@@ -274,5 +295,3 @@ def plot_method_correlation(
 
     fig.tight_layout()
     return fig, ax
-
-

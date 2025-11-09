@@ -127,8 +127,10 @@ print("=" * 80)
 
 print("\nYou can customize the plot by:")
 print("  1. Changing adjustment method:")
-print("     - adjust='bh': Benjamini-Hochberg (controls FDR, less conservative)")
-print("     - adjust='bonferroni': Bonferroni (controls FWER, more conservative)")
+print("     - adjust='bh': Benjamini–Hochberg (FDR; less conservative)")
+print("     - adjust='by': Benjamini–Yekutieli (FDR; conservative under dependence)")
+print("     - adjust='holm' / 'hochberg' / 'hommel' (FWER; step-wise)")
+print("     - adjust='bonferroni' / 'sidak' / 'holm-sidak' (FWER; conservative)")
 print("     - adjust='none': No adjustment (not recommended)")
 print()
 print("  2. Changing adjustment scope:")
@@ -146,24 +148,40 @@ print("     - label_map: Provide readable names for outcomes")
 # Example: More conservative adjustment
 # -----------------------------
 print("\n" + "=" * 80)
-print("EXAMPLE: BONFERRONI ADJUSTMENT")
+print("EXAMPLE: BY (Benjamini–Yekutieli) ADJUSTMENT")
 print("=" * 80)
 
-volcano_data_bonf = prepare_volcano_data(
+volcano_data_by = prepare_volcano_data(
     example_data,
-    adjust="bonferroni",
+    adjust="by",
     adjust_per="global",
 )
 
-print("\nBonferroni-adjusted q-values (more conservative):")
-for _, row in volcano_data_bonf.iterrows():
+print("\nBY-adjusted q-values (more conservative than BH):")
+for _, row in volcano_data_by.iterrows():
     sig_status = "significant" if row["q_value"] < 0.05 else "not significant"
     print(
         f"  {row['method']:5s} {row['outcome']:5s}: "
         f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})"
     )
 
-print("\nNote: Bonferroni is more conservative — fewer outcomes are significant")
+print("\n" + "=" * 80)
+print("EXAMPLE: HOLM ADJUSTMENT")
+print("=" * 80)
+
+volcano_data_holm = prepare_volcano_data(
+    example_data,
+    adjust="holm",
+    adjust_per="global",
+)
+
+print("\nHolm-adjusted q-values (FWER control):")
+for _, row in volcano_data_holm.iterrows():
+    sig_status = "significant" if row["q_value"] < 0.05 else "not significant"
+    print(
+        f"  {row['method']:5s} {row['outcome']:5s}: "
+        f"p={row['p_value']:.4f} → q={row['q_value']:.4f} ({sig_status})"
+    )
 
 # Show the plot
 plt.show()

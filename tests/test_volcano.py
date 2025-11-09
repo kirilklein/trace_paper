@@ -84,6 +84,21 @@ class TestAdjustPvalues(unittest.TestCase):
         # At minimum, smallest should give smallest adjusted
         self.assertEqual(np.argmin(pvals), np.argmin(adjusted))
 
+    def test_by_is_more_conservative_than_bh(self):
+        """BY should be at least as conservative as BH (q_BY >= q_BH)."""
+        pvals = np.array([0.001, 0.01, 0.05, 0.10, 0.20])
+        q_bh = adjust_pvalues(pvals, method="bh")
+        q_by = adjust_pvalues(pvals, method="by")
+        self.assertTrue(np.all(q_by >= q_bh))
+
+    def test_fwer_methods_at_least_bh(self):
+        """FWER methods should be at least as conservative as BH on same input."""
+        pvals = np.array([0.002, 0.01, 0.03, 0.07, 0.2])
+        q_bh = adjust_pvalues(pvals, method="bh")
+        for m in ["bonferroni", "sidak", "holm", "holm-sidak", "hochberg", "hommel"]:
+            q = adjust_pvalues(pvals, method=m)
+            self.assertTrue(np.all(q >= q_bh), f"{m} not >= BH")
+
     def test_nan_handling(self):
         """Test handling of NaN values."""
         pvals = np.array([0.01, np.nan, 0.03, 0.04])
@@ -464,7 +479,20 @@ class TestIntegration(unittest.TestCase):
             }
         )
 
-        for method in ["bh", "bonferroni", "none"]:
+        methods = [
+            "bh",
+            "by",
+            "tsbh",
+            "tsbky",
+            "bonferroni",
+            "sidak",
+            "holm",
+            "holm-sidak",
+            "hochberg",
+            "hommel",
+            "none",
+        ]
+        for method in methods:
             volcano_data = prepare_volcano_data(raw_data, adjust=method)
             fig, axes = volcano_plot_per_method(volcano_data)
 

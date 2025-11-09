@@ -78,6 +78,31 @@ def main() -> None:
         default=True,
         help="Run diagnostic analyses",
     )
+    parser.add_argument(
+        "--adjust",
+        choices=[
+            "bh",
+            "by",
+            "tsbh",
+            "tsbky",
+            "bonferroni",
+            "sidak",
+            "holm",
+            "holm-sidak",
+            "hochberg",
+            "hommel",
+            "none",
+        ],
+        default="bh",
+        help="Multiple testing adjustment method",
+    )
+    parser.add_argument(
+        "--adjust-per",
+        dest="adjust_per",
+        choices=["by_method", "global"],
+        default="by_method",
+        help="Scope of multiple testing adjustment",
+    )
 
     args = parser.parse_args()
 
@@ -221,8 +246,8 @@ def main() -> None:
         p_col="p_value",
         method_col="method",
         outcome_col="outcome",
-        adjust="bh",
-        adjust_per="by_method",
+        adjust=args.adjust,
+        adjust_per=args.adjust_per,
         effect_alias=effect_alias,
     )
 
