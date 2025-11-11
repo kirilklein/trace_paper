@@ -173,7 +173,7 @@ def _compute_logit_difference_p_value(
         )
 
     # 2. Determine Degrees of Freedom explicitly
-    df_logit = num_runs - 1
+    degrees_of_freedom = num_runs - 1
 
     # 3. Allocate output arrays
     p_vals = np.full_like(stat, np.nan)
@@ -183,13 +183,13 @@ def _compute_logit_difference_p_value(
 
     # --- Case A: Use t-distribution ---
     # True only if df_logit is a valid number (>= 1)
-    use_t_dist_mask = np.isfinite(df_logit) & (df_logit >= 1) & np.isfinite(stat)
+    use_t_dist_mask = np.isfinite(degrees_of_freedom) & (degrees_of_freedom >= 1) & np.isfinite(stat)
     if use_t_dist_mask.any():
         p_vals[use_t_dist_mask] = 2.0 * (
-            1.0 - tdist.cdf(np.abs(stat[use_t_dist_mask]), df=df_logit[use_t_dist_mask])
+            1.0 - tdist.cdf(np.abs(stat[use_t_dist_mask]), df=degrees_of_freedom[use_t_dist_mask])
         )
         crit_val[use_t_dist_mask] = tdist.ppf(
-            1 - alpha / 2, df=df_logit[use_t_dist_mask]
+            1 - alpha / 2, df=degrees_of_freedom[use_t_dist_mask]
         )
 
     # --- Case B: Use Normal distribution (z-test fallback) ---
@@ -207,7 +207,7 @@ def _compute_logit_difference_p_value(
     return {
         "eta_diff": diff_logit,
         "se_eta_diff": diff_se,
-        "df_logit": df_logit,
+        "df_logit": degrees_of_freedom,
         # Return statistic as 'z' to match the column name in main.py
         "z": stat,
         "p_value": p_vals,
