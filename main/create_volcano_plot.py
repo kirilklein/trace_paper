@@ -139,7 +139,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Construct file paths
-    estimates_path = args.input_dir / "combined_estimatest.txt"
+    estimates_path = args.input_dir / "combined_estimates.txt"
     stats_path = args.input_dir / "combined_stats.txt"
 
     # Determine effect parameters
