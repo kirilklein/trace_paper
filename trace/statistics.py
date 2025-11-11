@@ -5,17 +5,20 @@ This module handles the statistical pipeline for Risk Difference analysis.
 It employs a hybrid inference approach to ensure robust statistics:
 
 1. **Point Estimates & CIs (Risk Difference)**:
-   Calculated using the Delta Method. We transform logits back to probabilities,
-   compute RD = p1 - p0, and estimate the CI based on the propagated standard error.
+   Calculated using the Delta Method. We transform pooled logits back to
+   probabilities, compute RD = p1 - p0, and estimate the CI based on the
+   propagated standard error.
+   (See: _compute_delta_method_rd_ci)
 
 2. **Hypothesis Testing (P-values)**:
    Calculated using a t-test on the pooled logit scale (H0: logit(p1) = logit(p0)).
-   This is generally more robust for probabilities near 0 or 1 compared to the
-   Wald test on the risk difference scale.
+   This is generally more robust for probabilities near 0 or 1.
+   (See: _compute_logit_difference_p_value)
 
 Workflow:
-  Inputs (Probs) -> Logit Transform -> Inverse Variance Pooling (HKSJ)
-  -> Inference (Delta Method for RD, Logit T-test for P-value)
+  Inputs (Probs) -> Logit Transform -> Pooling
+  -> Call (1) for RD and CIs
+  -> Call (2) for P-Value
 """
 
 from __future__ import annotations
@@ -48,8 +51,6 @@ def compute_logit_se_from_ci(
 ) -> Union[float, np.ndarray]:
     """
     Derive the Standard Error (SE) on the logit scale from probability CIs.
-
-    Formula: SE_logit = (logit(high) - logit(low)) / (2 * z)
     """
     lo, hi = np.asarray(lo), np.asarray(hi)
     return (logit(hi) - logit(lo)) / (2 * z)
@@ -87,9 +88,6 @@ def pool_arm_logits(
 ) -> pd.DataFrame:
     """
     Pools logit estimates within groups.
-
-    Wraps specific pooling strategies (HKSJ, Simple Mean, etc.) and handles
-    pandas aggregation details.
     """
     group_cols_list = [group_cols] if isinstance(group_cols, str) else list(group_cols)
 
@@ -140,53 +138,43 @@ def pool_arm_logits(
 
 
 # -----------------------------
-# Inference: Logit Difference (Primary P-Value)
+# Inference: Logit Difference (P-Value)
 # -----------------------------
-def _compute_logit_difference_inference(
-    df: pd.DataFrame, ci_level: float = 0.95
-) -> pd.DataFrame:
+def _compute_logit_difference_p_value(
+    eta1: np.ndarray,
+    se1: np.ndarray,
+    eta0: np.ndarray,
+    se0: np.ndarray,
+    df1: np.ndarray,
+    df0: np.ndarray,
+    ci_level: float = 0.95,
+) -> Dict[str, np.ndarray]:
     """
-    Performs a t-test on the difference of pooled logits.
+    Performs a t-test on the difference of logits (pooled or unpooled).
 
     Logic:
       H0: logit(p1) - logit(p0) = 0
       t = (eta1 - eta0) / sqrt(se1^2 + se0^2)
 
-    This function PROMOTES this p-value to the primary 'p_value' column,
-    moving the Delta Method p-value (if it exists) to 'p_value_delta'.
+    Returns a dictionary with the primary p-value and related statistics.
     """
-    if df.empty:
-        return df
-
     alpha = 1.0 - ci_level
-    out = df.copy()
 
-    # 1. Extract pooled estimates
-    eta1 = out["eta1_pooled"].astype(float).to_numpy()
-    eta0 = out["eta0_pooled"].astype(float).to_numpy()
-    se1 = out["eta1_pooled_se"].astype(float).to_numpy()
-    se0 = out["eta0_pooled_se"].astype(float).to_numpy()
-
-    # 2. Compute Difference and SE (assuming independence between arms)
+    # 1. Compute Difference and SE (assuming independence between arms)
     diff_logit = eta1 - eta0
     diff_se = np.sqrt(se1**2 + se0**2)
 
-    # 3. Compute t-statistic
+    # 2. Compute t-statistic
     with np.errstate(divide="ignore", invalid="ignore"):
         t_stat = np.divide(
             diff_logit, diff_se, out=np.full_like(diff_logit, np.nan), where=diff_se > 0
         )
 
-    # 4. Determine Degrees of Freedom
+    # 3. Determine Degrees of Freedom
     # Uses the smaller DF of the two arms (conservative approach)
-    df1 = out.get("eta1_df", pd.Series(np.nan, index=out.index)).to_numpy()
-    if "eta0_df" in out.columns:
-        df0 = out["eta0_df"].to_numpy()
-        df_logit = np.fmin(df1, df0)
-    else:
-        df_logit = df1
+    df_logit = np.fmin(df1, df0)
 
-    # 5. Calculate P-values and Critical Values
+    # 4. Calculate P-values and Critical Values
     p_vals = np.full_like(t_stat, np.nan)
     tcrit = np.full_like(t_stat, np.nan)
 
@@ -198,41 +186,32 @@ def _compute_logit_difference_inference(
         )
         tcrit[t_mask] = tdist.ppf(1 - alpha / 2, df=df_logit[t_mask])
 
-    # Case B: Normal approximation (fallback)
+    # Case B: Normal approximation (fallback, e.g., for per-row)
     z_mask = (~t_mask) & np.isfinite(t_stat)
     if z_mask.any():
         p_vals[z_mask] = 2.0 * (1.0 - norm.cdf(np.abs(t_stat[z_mask])))
         tcrit[z_mask] = norm.ppf(1 - alpha / 2)
 
-    # 6. Calculate CIs on the logit scale
+    # 5. Calculate CIs on the logit scale
     ci_lo = diff_logit - tcrit * diff_se
     ci_hi = diff_logit + tcrit * diff_se
 
-    # 7. Store Results
-    out["eta_diff"] = diff_logit
-    out["se_eta_diff"] = diff_se
-    out["df_logit"] = df_logit
-    out["t_logit"] = t_stat
-    out["p_value_logit"] = p_vals
-    out["eta_diff_CI95_lower"] = ci_lo
-    out["eta_diff_CI95_upper"] = ci_hi
-
-    # 8. PROMOTE Logit Inference
-    # Move existing delta-method p-values to backup columns
-    if "p_value" in out.columns:
-        out.rename(columns={"p_value": "p_value_delta", "z": "z_delta"}, inplace=True)
-
-    # Set primary p-value to the logit-based one
-    out["p_value"] = out["p_value_logit"]
-    out["z"] = out["t_logit"]
-
-    return out
+    # 6. Store Results
+    return {
+        "eta_diff": diff_logit,
+        "se_eta_diff": diff_se,
+        "df_logit": df_logit,
+        "z": t_stat,  # Use 'z' as the generic statistic column name
+        "p_value": p_vals,
+        "eta_diff_CI95_lower": ci_lo,
+        "eta_diff_CI95_upper": ci_hi,
+    }
 
 
 # -----------------------------
-# Inference: Delta Method (RD Estimates)
+# Inference: Delta Method (RD Estimates & CI)
 # -----------------------------
-def _compute_delta_method_inference(
+def _compute_delta_method_rd_ci(
     eta1: np.ndarray,
     se1: np.ndarray,
     eta0: np.ndarray,
@@ -241,12 +220,13 @@ def _compute_delta_method_inference(
     verbose: bool = False,
 ) -> Dict[str, np.ndarray]:
     """
-    Calculates Risk Difference (RD) and its SE using the Delta Method.
+    Calculates Risk Difference (RD) and its SE/CI using the Delta Method.
+    This function *only* computes the effect size and its confidence,
+    not the p-value.
 
     Logic:
       RD = inv_logit(eta1) - inv_logit(eta0)
-      Var(RD) = Var(p1) + Var(p0)
-      Var(p) = [p * (1-p)]^2 * Var(eta)
+      Var(RD) = [p1*(1-p1)]^2*Var(eta1) + [p0*(1-p0)]^2*Var(eta0)
     """
     # 1. Transform back to probability scale
     p1 = inv_logit(eta1)
@@ -254,49 +234,30 @@ def _compute_delta_method_inference(
     rd = p1 - p0
 
     # 2. Delta Method Variance Propagation
-    # Derivative of sigmoid is p*(1-p)
     deriv1 = p1 * (1 - p1)
     deriv0 = p0 * (1 - p0)
 
     var_rd = (deriv1**2 * se1**2) + (deriv0**2 * se0**2)
     se_rd = np.sqrt(var_rd)
 
-    # 3. Wald Statistics (on RD scale)
-    # Note: These p-values are less robust than logit p-values
-    # and are often moved to 'p_value_delta' later.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        z = np.divide(rd, se_rd, out=np.full_like(rd, np.nan), where=se_rd > 0)
-
-    pval = 2 * (1 - norm.cdf(np.abs(z)))
-
+    # 3. Calculate Confidence Interval for RD
     rd_lo = rd - z_crit * se_rd
     rd_hi = rd + z_crit * se_rd
 
     # 4. Diagnostics
     if verbose:
-        _print_delta_diagnostics(se_rd, z)
+        n_tiny_se = np.sum(se_rd < 1e-6)
+        if n_tiny_se > 0:
+            print(f"  [DIAGNOSTIC] WARNING: SE_RD < 1e-6 count: {n_tiny_se}")
 
     return {
         "RD": rd,
         "SE_RD": se_rd,
-        "z": z,
-        "p_value": pval,
         "RD_CI95_lower": rd_lo,
         "RD_CI95_upper": rd_hi,
         "p1_hat": p1,
         "p0_hat": p0,
     }
-
-
-def _print_delta_diagnostics(se_rd: np.ndarray, z: np.ndarray):
-    """Helper to print warnings about extreme statistics."""
-    n_tiny_se = np.sum(se_rd < 1e-6)
-    if n_tiny_se > 0:
-        print(f"  [DIAGNOSTIC] WARNING: SE_RD < 1e-6 count: {n_tiny_se}")
-
-    n_extreme_z = np.sum(np.abs(z) > 30)
-    if n_extreme_z > 0:
-        print(f"  [DIAGNOSTIC] WARNING: |z| > 30 count: {n_extreme_z}")
 
 
 # -----------------------------
@@ -316,13 +277,8 @@ def compute_rd_pvalues(
 
     Pipeline:
     1. Adds logit transformations to the raw DataFrame.
-    2. If `group_cols` is None:
-       - Calculates RD and p-values per row.
-    3. If `group_cols` is provided:
-       - Pools logits for Arm 1 and Arm 0 separately (using `arm_pooling`).
-       - Merges pooled arms.
-       - Calculates RD estimates using Delta Method (for Effect Size axis).
-       - Calculates P-values using Logit Difference t-test (for Significance axis).
+    2. Calls _compute_delta_method_rd_ci for RD and CIs.
+    3. Calls _compute_logit_difference_p_value for p-value and z-score.
     """
 
     # 1. Prepare Data (Logit Transform)
@@ -332,15 +288,32 @@ def compute_rd_pvalues(
     if not group_cols:
         if verbose:
             print("  [INFO] Computing per-row RD statistics.")
-        res = _compute_delta_method_inference(
+
+        # Get RD and CIs
+        rd_stats = _compute_delta_method_rd_ci(
             eta1=df_logit["eta1"].values,
             se1=df_logit["se_eta1"].values,
             eta0=df_logit["eta0"].values,
             se0=df_logit["se_eta0"].values,
             verbose=verbose,
         )
+
+        # Get P-value
+        # For per-row, we have no degrees of freedom, so pass NaN
+        nan_df = np.full(len(df_logit), np.nan)
+        p_value_stats = _compute_logit_difference_p_value(
+            eta1=df_logit["eta1"].values,
+            se1=df_logit["se_eta1"].values,
+            eta0=df_logit["eta0"].values,
+            se0=df_logit["se_eta0"].values,
+            df1=nan_df,
+            df0=nan_df,
+        )
+
         out = df_logit.copy()
-        for k, v in res.items():
+        for k, v in rd_stats.items():
+            out[k] = v
+        for k, v in p_value_stats.items():
             out[k] = v
         return out
 
@@ -383,21 +356,29 @@ def compute_rd_pvalues(
         pooled["n_runs_arm1"].fillna(0), pooled["n_runs_arm0"].fillna(0)
     ).astype(int)
 
-    # 4. Calculate Statistics
-    # A. Delta Method: Generates "RD" and "p_value" (temporary)
-    delta_stats = _compute_delta_method_inference(
+    # 4. Calculate Statistics (in two clean steps)
+
+    # A. Get RD and CIs from pooled estimates
+    rd_stats = _compute_delta_method_rd_ci(
         eta1=pooled["eta1_pooled"].values,
         se1=pooled["eta1_pooled_se"].values,
         eta0=pooled["eta0_pooled"].values,
         se0=pooled["eta0_pooled_se"].values,
         verbose=verbose,
     )
-    for k, v in delta_stats.items():
+    for k, v in rd_stats.items():
         pooled[k] = v
 
-    # B. Logit Difference Test:
-    # - Moves Delta p-value to 'p_value_delta'
-    # - Sets 'p_value' to Logit t-test result (Primary significance metric)
-    pooled = _compute_logit_difference_inference(pooled, ci_level=0.95)
+    # B. Get P-value from pooled estimates
+    p_value_stats = _compute_logit_difference_p_value(
+        eta1=pooled["eta1_pooled"].values,
+        se1=pooled["eta1_pooled_se"].values,
+        eta0=pooled["eta0_pooled"].values,
+        se0=pooled["eta0_pooled_se"].values,
+        df1=pooled["eta1_df"].values,
+        df0=pooled["eta0_df"].values,
+    )
+    for k, v in p_value_stats.items():
+        pooled[k] = v
 
     return pooled
