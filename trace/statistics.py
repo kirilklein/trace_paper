@@ -92,19 +92,17 @@ def pool_arm_logits(
     group_cols_list = [group_cols] if isinstance(group_cols, str) else list(group_cols)
 
     def _agg_wrapper(g: pd.DataFrame) -> pd.Series:
-        # Filter valid data
         cleaned = (
             g.replace([np.inf, -np.inf], np.nan).dropna(subset=[eta_col, se_col]).copy()
         )
         m = len(cleaned)
 
-        # Default return template
         result = {
             out_prefix: np.nan,
             f"{out_prefix}_se": np.nan,
             f"{out_prefix}_tau2": np.nan,
-            "n_runs_used": m,
-            "df": np.nan,
+            "n_runs_used": m,  # This 'm' is what we'll use
+            "df": np.nan,  # 'df' column is no longer used but harmless
             "method_used": pooling,
         }
 
@@ -116,13 +114,14 @@ def pool_arm_logits(
         if pooling == "simple_mean":
             theta = float(np.mean(yi))
             if m >= 2:
-                # Sample standard error of the mean
                 se_hat = float(np.std(yi, ddof=1)) / np.sqrt(m)
                 df_s = m - 1
             else:
                 se_hat = np.nan
                 df_s = np.nan
 
+            # We still set 'df' for diagnostic purposes, but our
+            # p-value function will use 'n_runs_used' (m) directly.
             result.update({out_prefix: theta, f"{out_prefix}_se": se_hat, "df": df_s})
 
         else:
@@ -145,63 +144,72 @@ def _compute_logit_difference_p_value(
     se1: np.ndarray,
     eta0: np.ndarray,
     se0: np.ndarray,
-    df1: np.ndarray,
-    df0: np.ndarray,
+    num_runs: np.ndarray,
     ci_level: float = 0.95,
 ) -> Dict[str, np.ndarray]:
     """
-    Performs a t-test on the difference of logits (pooled or unpooled).
+    Performs a statistical test on the difference of logits.
+
+    This function handles TWO cases:
+    1. Pooled data (t-test): If num_runs >= 2, it performs a t-test
+       with (num_runs - 1) degrees of freedom.
+    2. Per-row data (z-test): If num_runs is NaN or < 2, it performs a
+       z-test (Normal distribution approximation).
 
     Logic:
       H0: logit(p1) - logit(p0) = 0
-      t = (eta1 - eta0) / sqrt(se1^2 + se0^2)
-
-    Returns a dictionary with the primary p-value and related statistics.
+      stat = (eta1 - eta0) / sqrt(se1^2 + se0^2)
     """
     alpha = 1.0 - ci_level
 
-    # 1. Compute Difference and SE (assuming independence between arms)
+    # 1. Compute Difference, SE, and the Test Statistic
     diff_logit = eta1 - eta0
     diff_se = np.sqrt(se1**2 + se0**2)
 
-    # 2. Compute t-statistic
     with np.errstate(divide="ignore", invalid="ignore"):
-        t_stat = np.divide(
+        # This is a 't' or 'z' statistic depending on the df
+        stat = np.divide(
             diff_logit, diff_se, out=np.full_like(diff_logit, np.nan), where=diff_se > 0
         )
 
-    # 3. Determine Degrees of Freedom
-    # Uses the smaller DF of the two arms (conservative approach)
-    df_logit = np.fmin(df1, df0)
+    # 2. Determine Degrees of Freedom explicitly
+    df_logit = num_runs - 1
 
-    # 4. Calculate P-values and Critical Values
-    p_vals = np.full_like(t_stat, np.nan)
-    tcrit = np.full_like(t_stat, np.nan)
+    # 3. Allocate output arrays
+    p_vals = np.full_like(stat, np.nan)
+    crit_val = np.full_like(stat, np.nan)  # Critical value for CI
 
-    # Case A: t-distribution (df >= 1)
-    t_mask = np.isfinite(df_logit) & (df_logit >= 1) & np.isfinite(t_stat)
-    if t_mask.any():
-        p_vals[t_mask] = 2.0 * (
-            1.0 - tdist.cdf(np.abs(t_stat[t_mask]), df=df_logit[t_mask])
+    # 4. Calculate P-values based on which test to use
+
+    # --- Case A: Use t-distribution ---
+    # True only if df_logit is a valid number (>= 1)
+    use_t_dist_mask = np.isfinite(df_logit) & (df_logit >= 1) & np.isfinite(stat)
+    if use_t_dist_mask.any():
+        p_vals[use_t_dist_mask] = 2.0 * (
+            1.0 - tdist.cdf(np.abs(stat[use_t_dist_mask]), df=df_logit[use_t_dist_mask])
         )
-        tcrit[t_mask] = tdist.ppf(1 - alpha / 2, df=df_logit[t_mask])
+        crit_val[use_t_dist_mask] = tdist.ppf(
+            1 - alpha / 2, df=df_logit[use_t_dist_mask]
+        )
 
-    # Case B: Normal approximation (fallback, e.g., for per-row)
-    z_mask = (~t_mask) & np.isfinite(t_stat)
-    if z_mask.any():
-        p_vals[z_mask] = 2.0 * (1.0 - norm.cdf(np.abs(t_stat[z_mask])))
-        tcrit[z_mask] = norm.ppf(1 - alpha / 2)
+    # --- Case B: Use Normal distribution (z-test fallback) ---
+    # True for rows that are NOT Case A (e.g., per-row with NaN df)
+    use_z_dist_mask = (~use_t_dist_mask) & np.isfinite(stat)
+    if use_z_dist_mask.any():
+        p_vals[use_z_dist_mask] = 2.0 * (1.0 - norm.cdf(np.abs(stat[use_z_dist_mask])))
+        crit_val[use_z_dist_mask] = norm.ppf(1 - alpha / 2)
 
     # 5. Calculate CIs on the logit scale
-    ci_lo = diff_logit - tcrit * diff_se
-    ci_hi = diff_logit + tcrit * diff_se
+    ci_lo = diff_logit - crit_val * diff_se
+    ci_hi = diff_logit + crit_val * diff_se
 
     # 6. Store Results
     return {
         "eta_diff": diff_logit,
         "se_eta_diff": diff_se,
         "df_logit": df_logit,
-        "z": t_stat,  # Use 'z' as the generic statistic column name
+        # Return statistic as 'z' to match the column name in main.py
+        "z": stat,
         "p_value": p_vals,
         "eta_diff_CI95_lower": ci_lo,
         "eta_diff_CI95_upper": ci_hi,
@@ -223,10 +231,6 @@ def _compute_delta_method_rd_ci(
     Calculates Risk Difference (RD) and its SE/CI using the Delta Method.
     This function *only* computes the effect size and its confidence,
     not the p-value.
-
-    Logic:
-      RD = inv_logit(eta1) - inv_logit(eta0)
-      Var(RD) = [p1*(1-p1)]^2*Var(eta1) + [p0*(1-p0)]^2*Var(eta0)
     """
     # 1. Transform back to probability scale
     p1 = inv_logit(eta1)
@@ -299,15 +303,14 @@ def compute_rd_pvalues(
         )
 
         # Get P-value
-        # For per-row, we have no degrees of freedom, so pass NaN
-        nan_df = np.full(len(df_logit), np.nan)
+        # For per-row, we pass NaN for num_runs to trigger z-test
+        nan_array = np.full(len(df_logit), np.nan)
         p_value_stats = _compute_logit_difference_p_value(
             eta1=df_logit["eta1"].values,
             se1=df_logit["se_eta1"].values,
             eta0=df_logit["eta0"].values,
             se0=df_logit["se_eta0"].values,
-            df1=nan_df,
-            df0=nan_df,
+            num_runs=nan_array,
         )
 
         out = df_logit.copy()
@@ -352,6 +355,7 @@ def compute_rd_pvalues(
         columns={"n_runs_used_x": "n_runs_arm1", "n_runs_used_y": "n_runs_arm0"},
         inplace=True,
     )
+    # This 'n_runs_shared' is the 'm' we need
     pooled["n_runs_shared"] = np.minimum(
         pooled["n_runs_arm1"].fillna(0), pooled["n_runs_arm0"].fillna(0)
     ).astype(int)
@@ -375,8 +379,7 @@ def compute_rd_pvalues(
         se1=pooled["eta1_pooled_se"].values,
         eta0=pooled["eta0_pooled"].values,
         se0=pooled["eta0_pooled_se"].values,
-        df1=pooled["eta1_df"].values,
-        df0=pooled["eta0_df"].values,
+        num_runs=pooled["n_runs_shared"].values,
     )
     for k, v in p_value_stats.items():
         pooled[k] = v
