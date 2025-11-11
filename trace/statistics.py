@@ -444,68 +444,83 @@ def pool_arm_logits(
 # Helper: logit-scale inference for pooled arms
 # -----------------------------
 def _add_logit_scale_inference(df: pd.DataFrame, ci: float = 0.95) -> pd.DataFrame:
-    """Augment pooled arm logits with logit-scale difference inference."""
+    """
+    Compute inference on the pooled logit difference (η1 - η0) and
+    make that the primary p-value/z reported downstream.
 
+    Output columns preserved exactly:
+      - eta_diff, se_eta_diff, df_logit, t_logit, p_value_logit,
+        eta_diff_CI95_lower, eta_diff_CI95_upper,
+        and the promoted p_value/z (with old ones saved as *_delta).
+    """
     if df.empty:
         return df
 
     alpha = 1.0 - ci
+    out = df.copy()
 
-    eta1 = df["eta1_pooled"].astype(float).values
-    eta0 = df["eta0_pooled"].astype(float).values
-    se1 = df["eta1_pooled_se"].astype(float).values
-    se0 = df["eta0_pooled_se"].astype(float).values
+    # Clearer internal names (columns unchanged)
+    treat_logit   = out["eta1_pooled"].astype(float).to_numpy()
+    control_logit = out["eta0_pooled"].astype(float).to_numpy()
+    treat_se      = out["eta1_pooled_se"].astype(float).to_numpy()
+    control_se    = out["eta0_pooled_se"].astype(float).to_numpy()
 
-    eta_diff = eta1 - eta0
-    se_diff = np.sqrt(se1**2 + se0**2)
+    # Difference and its SE on the logit scale
+    diff_logit = treat_logit - control_logit
+    diff_se    = np.sqrt(treat_se**2 + control_se**2)
 
+    # t-statistic for the logit difference
     with np.errstate(divide="ignore", invalid="ignore"):
-        t_stat = np.divide(
-            eta_diff,
-            se_diff,
-            out=np.full_like(eta_diff, np.nan),
-            where=se_diff > 0,
-        )
+        t_stat = np.divide(diff_logit, diff_se,
+                           out=np.full_like(diff_logit, np.nan),
+                           where=diff_se > 0)
 
-    df1 = df.get("eta1_df", pd.Series(np.nan, index=df.index)).astype(float).values
-    df0 = df.get("eta0_df", pd.Series(np.nan, index=df.index)).astype(float).values
-    df_logit = np.fmin(df1, df0)
+    # Degrees of freedom: keep existing behavior
+    df1 = out.get("eta1_df", pd.Series(np.nan, index=out.index)).astype(float).to_numpy()
+    if "eta0_df" in out.columns:
+        df0 = out["eta0_df"].astype(float).to_numpy()
+        df_logit = np.fmin(df1, df0)  # original: min(df1, df0)
+    else:
+        df_logit = df1                 # other file version: use eta1_df only
 
+    # Allocate arrays
     p_vals = np.full_like(t_stat, np.nan)
-    tcrit = np.full_like(t_stat, np.nan)
+    tcrit  = np.full_like(t_stat, np.nan)
 
-    for i, (t_val, df_val, s_val) in enumerate(zip(t_stat, df_logit, se_diff)):
-        if not np.isfinite(t_val):
-            continue
+    # Where we have finite df >= 1 → t distribution
+    t_mask = np.isfinite(df_logit) & (df_logit >= 1) & np.isfinite(t_stat)
+    if t_mask.any():
+        p_vals[t_mask] = 2.0 * (1.0 - tdist.cdf(np.abs(t_stat[t_mask]), df=df_logit[t_mask]))
+        tcrit[t_mask]  = tdist.ppf(1 - alpha / 2, df=df_logit[t_mask])
 
-        if np.isfinite(df_val) and df_val >= 1:
-            p_vals[i] = 2 * (1 - tdist.cdf(abs(t_val), df=df_val))
-            tcrit[i] = tdist.ppf(1 - alpha / 2, df=df_val)
-        else:
-            p_vals[i] = 2 * (1 - norm.cdf(abs(t_val)))
-            tcrit[i] = norm.ppf(1 - alpha / 2)
+    # Else → normal approximation
+    z_mask = (~t_mask) & np.isfinite(t_stat)
+    if z_mask.any():
+        p_vals[z_mask] = 2.0 * (1.0 - norm.cdf(np.abs(t_stat[z_mask])))
+        tcrit[z_mask]  = norm.ppf(1 - alpha / 2)
 
-        if not np.isfinite(s_val) or s_val <= 0:
-            tcrit[i] = np.nan
+    # If SE is invalid/nonpositive, CI is undefined
+    bad_se_mask = ~np.isfinite(diff_se) | (diff_se <= 0)
+    if bad_se_mask.any():
+        tcrit[bad_se_mask] = np.nan
 
-    lo = eta_diff - tcrit * se_diff
-    hi = eta_diff + tcrit * se_diff
+    ci_lo = diff_logit - tcrit * diff_se
+    ci_hi = diff_logit + tcrit * diff_se
 
-    df = df.copy()
-    df["eta_diff"] = eta_diff
-    df["se_eta_diff"] = se_diff
-    df["df_logit"] = df_logit
-    df["t_logit"] = t_stat
-    df["p_value_logit"] = p_vals
-    df["eta_diff_CI95_lower"] = lo
-    df["eta_diff_CI95_upper"] = hi
+    # Write outputs with the same column names as before
+    out["eta_diff"]             = diff_logit
+    out["se_eta_diff"]          = diff_se
+    out["df_logit"]             = df_logit
+    out["t_logit"]              = t_stat
+    out["p_value_logit"]        = p_vals
+    out["eta_diff_CI95_lower"]  = ci_lo
+    out["eta_diff_CI95_upper"]  = ci_hi
 
-    # Preserve delta-method diagnostics but promote logit-scale inference
-    df.rename(columns={"p_value": "p_value_delta", "z": "z_delta"}, inplace=True)
-    df["p_value"] = df["p_value_logit"]
-    df["z"] = df["t_logit"]
-
-    return df
+    # Promote logit-scale inference to primary p-value / z, preserve delta-method
+    out.rename(columns={"p_value": "p_value_delta", "z": "z_delta"}, inplace=True)
+    out["p_value"] = out["p_value_logit"]
+    out["z"]       = out["t_logit"]
+    return out
 
 
 # -----------------------------
