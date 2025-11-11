@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Union, Literal
 from scipy.stats import t as tdist, norm
+from scipy.special import logit
+from scipy.special import expit as inv_logit
 
 # -----------------------------
 # Column configuration
@@ -33,64 +35,6 @@ COL_E1_L = "effect_1_CI95_lower"
 COL_E1_U = "effect_1_CI95_upper"
 COL_E0_L = "effect_0_CI95_lower"
 COL_E0_U = "effect_0_CI95_upper"
-
-
-# -----------------------------
-# Utilities
-# -----------------------------
-def _clip_prob(p: Union[float, np.ndarray], eps: float = 1e-8) -> np.ndarray:
-    """
-    Clip probabilities to [eps, 1-eps] to avoid log(0) or log(1).
-
-    Parameters
-    ----------
-    p : float or np.ndarray
-        Probability or array of probabilities
-    eps : float, optional
-        Small value to clip probabilities away from 0 and 1 (default: 1e-8)
-
-    Returns
-    -------
-    np.ndarray
-        Clipped probabilities
-    """
-    return np.clip(np.asarray(p, dtype=float), eps, 1 - eps)
-
-
-def logit(p: Union[float, np.ndarray]) -> np.ndarray:
-    """
-    Compute the logit transformation: log(p / (1-p)).
-
-    Parameters
-    ----------
-    p : float or np.ndarray
-        Probability or array of probabilities
-
-    Returns
-    -------
-    np.ndarray
-        Logit-transformed values
-    """
-    p = _clip_prob(p)
-    return np.log(p / (1 - p))
-
-
-def inv_logit(x: Union[float, np.ndarray]) -> np.ndarray:
-    """
-    Compute the inverse logit (sigmoid) transformation: 1 / (1 + exp(-x)).
-
-    Parameters
-    ----------
-    x : float or np.ndarray
-        Value or array of values on the logit scale
-
-    Returns
-    -------
-    np.ndarray
-        Probabilities on [0,1]
-    """
-    x = np.asarray(x)
-    return 1.0 / (1.0 + np.exp(-x))
 
 
 def se_from_prob_ci_on_logit(
@@ -161,6 +105,7 @@ def add_logit_arm_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
+
 def pool_arm_logits(
     df: pd.DataFrame,
     group_cols: Union[str, List[str]],
@@ -207,8 +152,6 @@ def pool_arm_logits(
         group_cols_list: List[str] = [group_cols]
     else:
         group_cols_list = list(group_cols)
-
-    alpha = 1.0 - ci
 
     def _agg(g: pd.DataFrame) -> pd.Series:
         cleaned = (
@@ -367,44 +310,48 @@ def _add_logit_scale_inference(df: pd.DataFrame, ci: float = 0.95) -> pd.DataFra
     out = df.copy()
 
     # Clearer internal names (columns unchanged)
-    treat_logit   = out["eta1_pooled"].astype(float).to_numpy()
+    treat_logit = out["eta1_pooled"].astype(float).to_numpy()
     control_logit = out["eta0_pooled"].astype(float).to_numpy()
-    treat_se      = out["eta1_pooled_se"].astype(float).to_numpy()
-    control_se    = out["eta0_pooled_se"].astype(float).to_numpy()
+    treat_se = out["eta1_pooled_se"].astype(float).to_numpy()
+    control_se = out["eta0_pooled_se"].astype(float).to_numpy()
 
     # Difference and its SE on the logit scale
     diff_logit = treat_logit - control_logit
-    diff_se    = np.sqrt(treat_se**2 + control_se**2)
+    diff_se = np.sqrt(treat_se**2 + control_se**2)
 
     # t-statistic for the logit difference
     with np.errstate(divide="ignore", invalid="ignore"):
-        t_stat = np.divide(diff_logit, diff_se,
-                           out=np.full_like(diff_logit, np.nan),
-                           where=diff_se > 0)
+        t_stat = np.divide(
+            diff_logit, diff_se, out=np.full_like(diff_logit, np.nan), where=diff_se > 0
+        )
 
     # Degrees of freedom: keep existing behavior
-    df1 = out.get("eta1_df", pd.Series(np.nan, index=out.index)).astype(float).to_numpy()
+    df1 = (
+        out.get("eta1_df", pd.Series(np.nan, index=out.index)).astype(float).to_numpy()
+    )
     if "eta0_df" in out.columns:
         df0 = out["eta0_df"].astype(float).to_numpy()
         df_logit = np.fmin(df1, df0)  # original: min(df1, df0)
     else:
-        df_logit = df1                 # other file version: use eta1_df only
+        df_logit = df1  # other file version: use eta1_df only
 
     # Allocate arrays
     p_vals = np.full_like(t_stat, np.nan)
-    tcrit  = np.full_like(t_stat, np.nan)
+    tcrit = np.full_like(t_stat, np.nan)
 
     # Where we have finite df >= 1 → t distribution
     t_mask = np.isfinite(df_logit) & (df_logit >= 1) & np.isfinite(t_stat)
     if t_mask.any():
-        p_vals[t_mask] = 2.0 * (1.0 - tdist.cdf(np.abs(t_stat[t_mask]), df=df_logit[t_mask]))
-        tcrit[t_mask]  = tdist.ppf(1 - alpha / 2, df=df_logit[t_mask])
+        p_vals[t_mask] = 2.0 * (
+            1.0 - tdist.cdf(np.abs(t_stat[t_mask]), df=df_logit[t_mask])
+        )
+        tcrit[t_mask] = tdist.ppf(1 - alpha / 2, df=df_logit[t_mask])
 
     # Else → normal approximation
     z_mask = (~t_mask) & np.isfinite(t_stat)
     if z_mask.any():
         p_vals[z_mask] = 2.0 * (1.0 - norm.cdf(np.abs(t_stat[z_mask])))
-        tcrit[z_mask]  = norm.ppf(1 - alpha / 2)
+        tcrit[z_mask] = norm.ppf(1 - alpha / 2)
 
     # If SE is invalid/nonpositive, CI is undefined
     bad_se_mask = ~np.isfinite(diff_se) | (diff_se <= 0)
@@ -415,18 +362,18 @@ def _add_logit_scale_inference(df: pd.DataFrame, ci: float = 0.95) -> pd.DataFra
     ci_hi = diff_logit + tcrit * diff_se
 
     # Write outputs with the same column names as before
-    out["eta_diff"]             = diff_logit
-    out["se_eta_diff"]          = diff_se
-    out["df_logit"]             = df_logit
-    out["t_logit"]              = t_stat
-    out["p_value_logit"]        = p_vals
-    out["eta_diff_CI95_lower"]  = ci_lo
-    out["eta_diff_CI95_upper"]  = ci_hi
+    out["eta_diff"] = diff_logit
+    out["se_eta_diff"] = diff_se
+    out["df_logit"] = df_logit
+    out["t_logit"] = t_stat
+    out["p_value_logit"] = p_vals
+    out["eta_diff_CI95_lower"] = ci_lo
+    out["eta_diff_CI95_upper"] = ci_hi
 
     # Promote logit-scale inference to primary p-value / z, preserve delta-method
     out.rename(columns={"p_value": "p_value_delta", "z": "z_delta"}, inplace=True)
     out["p_value"] = out["p_value_logit"]
-    out["z"]       = out["t_logit"]
+    out["z"] = out["t_logit"]
     return out
 
 
