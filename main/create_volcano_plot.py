@@ -106,13 +106,14 @@ def main() -> None:
 
     parser.add_argument(
         "--arm-pooling",
-        choices=["random_effects_hksj", "fixed_effect", "correlation_adjusted"],
+        choices=["random_effects_hksj", "fixed_effect", "correlation_adjusted", "simple_mean"],
         default="random_effects_hksj",
         help=(
             "Arm-level pooling on the logit scale across runs: "
             "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
             "'fixed_effect' (inverse-variance fixed effect) or "
-            "'correlation_adjusted' (uses weights and rho)"
+            "'correlation_adjusted' (uses weights and rho) or "
+            "'simple_mean' (unweighted mean of logits; SEM uses sample std with ddof=1)"
         ),
     )
 
@@ -275,7 +276,7 @@ def main() -> None:
 
     # Run diagnostics if requested
     if args.diagnostics:
-        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type)
+        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type, out_dir=str(args.output_dir))
 
     # Prepare volcano plot data
     print("\nPreparing volcano plot data...")

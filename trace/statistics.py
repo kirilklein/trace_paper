@@ -261,7 +261,7 @@ def pool_arm_logits(
     se_col: str,
     out_prefix: str,
     pooling: Literal[
-        "fixed_effect", "random_effects_hksj", "correlation_adjusted"
+        "fixed_effect", "random_effects_hksj", "correlation_adjusted", "simple_mean"
     ] = "fixed_effect",
     *,
     rho: Optional[float] = None,
@@ -362,6 +362,26 @@ def pool_arm_logits(
                     "n_runs_used": m,
                     "df": res_df,
                     "method_used": "correlation_adjusted",
+                }
+            )
+
+        if pooling == "simple_mean":
+            theta = float(np.mean(yi)) if m > 0 else np.nan
+            if m >= 2:
+                s = float(np.std(yi, ddof=1))
+                se_hat = s / np.sqrt(m)
+                df_s = m - 1
+            else:
+                se_hat = np.nan
+                df_s = np.nan
+            return pd.Series(
+                {
+                    out_prefix: theta,
+                    f"{out_prefix}_se": se_hat,
+                    f"{out_prefix}_tau2": np.nan,
+                    "n_runs_used": m,
+                    "df": df_s,
+                    "method_used": "simple_mean",
                 }
             )
 
@@ -761,6 +781,8 @@ def compute_rd_pvalues(
       - ``\"random_effects_hksj\"`` (default): DerSimonian–Laird RE with
         Hartung–Knapp–Sidik–Jonkman standard errors
       - ``\"fixed_effect\"``: inverse-variance fixed-effect pooling
+      - ``\"correlation_adjusted\"``: correlation-aware weighted pooling with B_eff
+      - ``\"simple_mean\"``: unweighted mean of logits; SEM from sample std (ddof=1)/sqrt(m)
 
     Parameters
     ----------
