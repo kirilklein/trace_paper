@@ -175,45 +175,6 @@ def pool_arm_logits(
         sei = cleaned[se_col].astype(float).values
         vi = sei**2
 
-        if pooling == "fixed_effect" or m == 1:
-            w = np.divide(1.0, vi, out=np.zeros_like(vi), where=vi > 0)
-            weight_sum = np.sum(w)
-            if weight_sum <= 0:
-                eta_hat = np.nan
-                se_hat = np.nan
-            else:
-                eta_hat = np.sum(w * yi) / weight_sum
-                se_hat = np.sqrt(1.0 / weight_sum)
-            return pd.Series(
-                {
-                    out_prefix: eta_hat,
-                    f"{out_prefix}_se": se_hat,
-                    f"{out_prefix}_tau2": 0.0,
-                    "n_runs_used": m,
-                    "df": np.nan if m < 2 else m - 1,
-                    "method_used": (
-                        "fixed_effect" if pooling == "fixed_effect" else "single_run"
-                    ),
-                }
-            )
-
-        if pooling == "correlation_adjusted":
-            raw_w = None
-            if weight_col is not None and (weight_col in cleaned.columns):
-                raw_w = cleaned[weight_col].astype(float).values
-            res_theta, res_se, res_df, _, _, _ = correlation_adjusted_arm_pool(
-                yi, vi, weights=raw_w, rho=rho
-            )
-            return pd.Series(
-                {
-                    out_prefix: res_theta,
-                    f"{out_prefix}_se": res_se,
-                    f"{out_prefix}_tau2": np.nan,
-                    "n_runs_used": m,
-                    "df": res_df,
-                    "method_used": "correlation_adjusted",
-                }
-            )
 
         if pooling == "simple_mean":
             theta = float(np.mean(yi)) if m > 0 else np.nan
