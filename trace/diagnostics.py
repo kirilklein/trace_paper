@@ -346,8 +346,12 @@ def plot_std_comparison(
         )
 
     d = df_with_arms.copy()
-    d["se_eta1"] = se_from_prob_ci_on_logit(d["effect_1_CI95_lower"], d["effect_1_CI95_upper"])
-    d["se_eta0"] = se_from_prob_ci_on_logit(d["effect_0_CI95_lower"], d["effect_0_CI95_upper"])
+    d["se_eta1"] = se_from_prob_ci_on_logit(
+        d["effect_1_CI95_lower"], d["effect_1_CI95_upper"]
+    )
+    d["se_eta0"] = se_from_prob_ci_on_logit(
+        d["effect_0_CI95_lower"], d["effect_0_CI95_upper"]
+    )
 
     group_list = list(group_cols)
     per_group = (
@@ -383,9 +387,15 @@ def plot_std_comparison(
     color_map = {m: palette[i % len(palette)] for i, m in enumerate(methods)}
 
     for ax, (title, xcol, ycol) in zip(axes, panels):
-        data = merged[[*group_cols, xcol, ycol]].replace([np.inf, -np.inf], np.nan).dropna(subset=[xcol, ycol])
+        data = (
+            merged[[*group_cols, xcol, ycol]]
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=[xcol, ycol])
+        )
         if data.empty:
-            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.text(
+                0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes
+            )
             continue
 
         x = data[xcol].values
@@ -400,7 +410,9 @@ def plot_std_comparison(
             dm = data[data[group_cols[0]] == m]
             if dm.empty:
                 continue
-            ax.scatter(dm[xcol], dm[ycol], s=28, alpha=0.75, color=color_map[m], label=str(m))
+            ax.scatter(
+                dm[xcol], dm[ycol], s=28, alpha=0.75, color=color_map[m], label=str(m)
+            )
 
         r2 = np.nan
         if len(x) >= 2:
@@ -408,7 +420,9 @@ def plot_std_comparison(
                 r = np.corrcoef(x, y)[0, 1]
             r2 = float(r * r) if np.isfinite(r) else np.nan
 
-        ax.set_title(f"{title}  (R² = {r2:.3f})" if np.isfinite(r2) else f"{title}  (R² = NA)")
+        ax.set_title(
+            f"{title}  (R² = {r2:.3f})" if np.isfinite(r2) else f"{title}  (R² = NA)"
+        )
         ax.set_xlabel("Median per-run SE (logit)")
         ax.set_ylabel("Pooled SE (logit)")
         ax.set_xlim(lo, hi)
@@ -417,11 +431,14 @@ def plot_std_comparison(
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 4), frameon=False)
+        fig.legend(
+            handles, labels, loc="upper center", ncol=min(len(labels), 4), frameon=False
+        )
         fig.subplots_adjust(top=0.85)
 
     fig.tight_layout()
     return fig
+
 
 def run_diagnostics(
     df_pooled: pd.DataFrame,
@@ -450,7 +467,9 @@ def run_diagnostics(
     # Std comparison figure (arm-level, logit scale)
     if out_dir:
         try:
-            fig_std = plot_std_comparison(df_pooled, df_with_arms, group_cols=("method", "outcome"))
+            fig_std = plot_std_comparison(
+                df_pooled, df_with_arms, group_cols=("method", "outcome")
+            )
             out_path = f"{out_dir}/std_comparison_{effect_type.lower()}.png"
             fig_std.savefig(out_path, dpi=300, bbox_inches="tight")
             plt.close(fig_std)

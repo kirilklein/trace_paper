@@ -103,10 +103,21 @@ def main() -> None:
         default="by_method",
         help="Scope of multiple testing adjustment",
     )
+    parser.add_argument(
+        "--min-prevalence",
+        type=float,
+        default=0.0,
+        help="Minimum prevalence threshold (as proportion 0-1). Filters outcomes with prevalence_mean_total < threshold. Default: 0.0 (no filtering)",
+    )
 
     parser.add_argument(
         "--arm-pooling",
-        choices=["random_effects_hksj", "fixed_effect", "correlation_adjusted", "simple_mean"],
+        choices=[
+            "random_effects_hksj",
+            "fixed_effect",
+            "correlation_adjusted",
+            "simple_mean",
+        ],
         default="random_effects_hksj",
         help=(
             "Arm-level pooling on the logit scale across runs: "
@@ -276,7 +287,12 @@ def main() -> None:
 
     # Run diagnostics if requested
     if args.diagnostics:
-        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type, out_dir=str(args.output_dir))
+        run_diagnostics(
+            df_pooled,
+            df_with_arms,
+            effect_type=effect_type,
+            out_dir=str(args.output_dir),
+        )
 
     # Prepare volcano plot data
     print("\nPreparing volcano plot data...")
@@ -311,6 +327,19 @@ def main() -> None:
         atc_mapping,
         effect_col=effect_col,
     )
+
+    # Filter by minimum prevalence if specified
+    if args.min_prevalence > 0.0:
+        n_before = len(df_volcano_enriched)
+        df_volcano_enriched = df_volcano_enriched[
+            df_volcano_enriched["prevalence_mean_total"] >= args.min_prevalence
+        ].copy()
+        n_after = len(df_volcano_enriched)
+        n_filtered = n_before - n_after
+        print(
+            f"\nFiltered {n_filtered} outcomes with prevalence < {args.min_prevalence:.4f}"
+        )
+        print(f"Remaining: {n_after} outcomes")
 
     # Summary statistics
     print("\nSummary statistics:")
