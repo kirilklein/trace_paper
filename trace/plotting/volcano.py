@@ -33,7 +33,19 @@ from matplotlib.axes import Axes
 # ------------------------------------------------------------------------------------
 def adjust_pvalues(
     pvals: Iterable[float],
-    method: Literal["bh", "bonferroni", "none"] = "bh",
+    method: Literal[
+        "bh",
+        "by",
+        "tsbh",
+        "tsbky",
+        "bonferroni",
+        "sidak",
+        "holm",
+        "holm-sidak",
+        "hochberg",
+        "hommel",
+        "none",
+    ] = "bh",
 ) -> np.ndarray:
     """
     Return adjusted p-values (q-values) in the original order.
@@ -42,10 +54,18 @@ def adjust_pvalues(
     ----------
     pvals : iterable of float
         Array of p-values to adjust
-    method : {'bh', 'bonferroni', 'none'}, optional
-        Adjustment method:
-        - 'bh': Benjamini-Hochberg step-up FDR control (default)
-        - 'bonferroni': Bonferroni family-wise error rate control
+    method : {'bh','by','tsbh','tsbky','bonferroni','sidak','holm','holm-sidak','hochberg','hommel','none'}, optional
+        Adjustment method (powered by statsmodels.stats.multitest.multipletests):
+        - 'bh': Benjamini–Hochberg FDR (fdr_bh, default; less conservative)
+        - 'by': Benjamini–Yekutieli FDR (fdr_by; conservative under dependence)
+        - 'tsbh': Two-stage BH FDR (fdr_tsbh)
+        - 'tsbky': Two-stage BKY FDR (fdr_tsbky)
+        - 'bonferroni': Bonferroni FWER (very conservative)
+        - 'sidak': Šidák FWER (independence assumption)
+        - 'holm': Holm step-down FWER (uniformly better than Bonferroni)
+        - 'holm-sidak': Holm–Šidák step-down FWER
+        - 'hochberg': Hochberg (Simes–Hochberg) step-up FWER
+        - 'hommel': Hommel FWER
         - 'none': No adjustment (q = p)
 
     Returns
@@ -55,41 +75,47 @@ def adjust_pvalues(
 
     Notes
     -----
-    The Benjamini-Hochberg procedure controls the False Discovery Rate (FDR),
-    which is less conservative than family-wise error rate control methods
-    like Bonferroni. Non-finite p-values (NaN, inf) are preserved as NaN
-    in the output.
+    Non-finite p-values (NaN, inf) are preserved as NaN in the output.
     """
     p = np.asarray(pvals, dtype=float)
-    n = p.size
 
     if method == "none":
         return p.copy()
 
-    if method == "bonferroni":
-        return np.minimum(p * n, 1.0)
+    # Use statsmodels.multipletests for all supported methods (except 'none')
+    try:
+        from statsmodels.stats.multitest import multipletests
+    except Exception as exc:
+        raise RuntimeError(
+            "statsmodels is required for p-value adjustment methods other than 'none'. "
+            "Please install statsmodels>=0.14.0."
+        ) from exc
 
-    if method == "bh":
-        # Benjamini–Hochberg (step-up) on finite p-values
-        finite_mask = np.isfinite(p)
-        q = np.full_like(p, np.nan, dtype=float)
-        if finite_mask.sum() == 0:
-            return q  # all NaN
+    method_map: Dict[str, str] = {
+        "bh": "fdr_bh",
+        "by": "fdr_by",
+        "tsbh": "fdr_tsbh",
+        "tsbky": "fdr_tsbky",
+        "bonferroni": "bonferroni",
+        "sidak": "sidak",
+        "holm": "holm",
+        "holm-sidak": "holm-sidak",
+        "hochberg": "simes-hochberg",
+        "hommel": "hommel",
+    }
 
-        ps = p[finite_mask]
-        order = np.argsort(ps)
-        ranks = np.empty_like(order)
-        ranks[order] = np.arange(1, ps.size + 1)
+    if method not in method_map:
+        raise ValueError(f"Unknown method: {method}")
 
-        # Compute BH: q_i = (m/i) * p_i
-        q_raw = ps.size / ranks * ps
-        # Make it monotone non-increasing backward
-        q_monotone = np.minimum.accumulate(q_raw[order[::-1]])[::-1]
-        q_vals = np.minimum(q_monotone, 1.0)
-        q[finite_mask] = q_vals[ranks - 1]  # place back in original positions
-        return q
+    finite_mask = np.isfinite(p)
+    q = np.full_like(p, np.nan, dtype=float)
+    if finite_mask.sum() == 0:
+        return q  # all NaN
 
-    raise ValueError(f"Unknown method: {method}")
+    ps = p[finite_mask]
+    _, qvals, _, _ = multipletests(ps, method=method_map[method])
+    q[finite_mask] = qvals
+    return q
 
 
 # ------------------------------------------------------------------------------------
@@ -101,7 +127,19 @@ def prepare_volcano_data(
     p_col: str = "p_value",
     method_col: str = "method",
     outcome_col: str = "outcome",
-    adjust: Literal["bh", "bonferroni", "none"] = "bh",
+    adjust: Literal[
+        "bh",
+        "by",
+        "tsbh",
+        "tsbky",
+        "bonferroni",
+        "sidak",
+        "holm",
+        "holm-sidak",
+        "hochberg",
+        "hommel",
+        "none",
+    ] = "bh",
     adjust_per: Literal["by_method", "global"] = "by_method",
     p_floor: float = 1e-20,
     effect_alias: Optional[str] = None,
@@ -125,12 +163,12 @@ def prepare_volcano_data(
         Column name for method identifier (default: "method")
     outcome_col : str, optional
         Column name for outcome identifier (default: "outcome")
-    adjust : {'bh', 'bonferroni', 'none'}, optional
-        P-value adjustment method (default: "bh")
+    adjust : {'bh','by','tsbh','tsbky','bonferroni','sidak','holm','holm-sidak','hochberg','hommel','none'}, optional
+        P-value adjustment method (default: "bh").
     adjust_per : {'by_method', 'global'}, optional
         Whether to adjust within each method or globally (default: "by_method")
     p_floor : float, optional
-        Minimum p-value for -log10 transformation to avoid inf (default: 1e-300)
+        Minimum p-value for -log10 transformation to avoid inf (default: 1e-20)
 
     Parameters
     ----------
@@ -274,7 +312,7 @@ def volcano_plot_per_method(
             d.loc[~sig, "neglog10p"],
             s=point_size,
             alpha=0.7,
-            label="BH q ≥ α",
+            label="q ≥ α",
             color=c_ns,
         )
         # Significant points
@@ -283,7 +321,7 @@ def volcano_plot_per_method(
             d.loc[sig, "neglog10p"],
             s=point_size,
             alpha=0.9,
-            label="BH q < α",
+            label="q < α",
             color=c_sig,
         )
 
@@ -320,7 +358,7 @@ def volcano_plot_per_method(
             handles,
             labels,
             loc="upper right",
-            title="BH-adjusted q",
+            title="Adjusted q",
         )
     fig.tight_layout()
     return fig, axes

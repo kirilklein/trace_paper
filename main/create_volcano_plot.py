@@ -41,11 +41,8 @@ from trace.plotting.volcano_plotly import (
     build_plotly_volcano,
     save_plotly_figure,
 )
-from trace.statistics import (
-    combine_rr_random_effects_HKSJ,
-    compute_rd_pvalues,
-    compute_rr_from_arm_estimates,
-)
+from trace.statistics import compute_rd_pvalues
+from trace.plotting.correlation import plot_method_correlation
 
 
 # -----------------------------------------------------------------------------
@@ -81,11 +78,68 @@ def main() -> None:
         default=True,
         help="Run diagnostic analyses",
     )
+    parser.add_argument(
+        "--adjust",
+        choices=[
+            "bh",
+            "by",
+            "tsbh",
+            "tsbky",
+            "bonferroni",
+            "sidak",
+            "holm",
+            "holm-sidak",
+            "hochberg",
+            "hommel",
+            "none",
+        ],
+        default="bh",
+        help="Multiple testing adjustment method",
+    )
+    parser.add_argument(
+        "--adjust-per",
+        dest="adjust_per",
+        choices=["by_method", "global"],
+        default="by_method",
+        help="Scope of multiple testing adjustment",
+    )
+
+    parser.add_argument(
+        "--arm-pooling",
+        choices=["random_effects_hksj", "fixed_effect", "correlation_adjusted", "simple_mean"],
+        default="random_effects_hksj",
+        help=(
+            "Arm-level pooling on the logit scale across runs: "
+            "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
+            "'fixed_effect' (inverse-variance fixed effect) or "
+            "'correlation_adjusted' (uses weights and rho) or "
+            "'simple_mean' (unweighted mean of logits; SEM uses sample std with ddof=1)"
+        ),
+    )
+
+    parser.add_argument(
+        "--arm-pooling-rho",
+        type=float,
+        default=None,
+        help=(
+            "Correlation parameter rho for 'correlation_adjusted' arm pooling. "
+            "If omitted, a default internal value is used."
+        ),
+    )
+    parser.add_argument(
+        "--arm-weight-col",
+        type=str,
+        default=None,
+        help=(
+            "Optional column name for run weights/sizes used by "
+            "'correlation_adjusted' arm pooling. Defaults to equal weights."
+        ),
+    )
 
     args = parser.parse_args()
 
     # Construct file paths
-    estimates_path = args.input_dir / "combined_estimatest.txt"
+    estimates_path = args.input_dir / "combined_estimates.txt"
     stats_path = args.input_dir / "combined_stats.txt"
 
     # Determine effect parameters
@@ -138,15 +192,37 @@ def main() -> None:
 
     # Compute effects based on type
     if effect_type in ["RR", "log-RR"]:
-        print("\nComputing per-run risk ratios...")
-        df_per_run = compute_rr_from_arm_estimates(
-            df_with_arms, group_cols=None, verbose=False
+        # Synchronize inference with RD: use pooled logit-difference p-values
+        # and derive RR for the effect axis.
+        print(
+            "\nComputing per-run RD pipeline outputs (for metadata and per-run RR)..."
         )
+        df_per_run = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=None,
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
+            verbose=False,
+        )
+        # Derive per-run RR from arm probabilities
+        if not df_per_run.empty:
+            df_per_run = df_per_run.copy()
+            df_per_run["RR"] = df_per_run["p1_hat"] / df_per_run["p0_hat"]
 
-        print("Pooling risk ratios with DL + HKSJ adjustment...")
-        df_pooled = combine_rr_random_effects_HKSJ(
-            df_per_run, group_cols=("method", "outcome")
+        print("Pooling arm logits and computing shared logit-difference p-values...")
+        df_pooled = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=("method", "outcome"),
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
+            verbose=False,
         )
+        # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
+        if not df_pooled.empty:
+            df_pooled = df_pooled.copy()
+            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
         if df_pooled.empty:
@@ -162,15 +238,19 @@ def main() -> None:
         df_per_run = compute_rd_pvalues(
             df_with_arms,
             group_cols=None,
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
 
-        print("Pooling risk differences using inverse variance on arms...")
+        print("Pooling across runs using arm-level pooling on the logit scale...")
         df_pooled = compute_rd_pvalues(
             df_with_arms,
             group_cols=("method", "outcome"),
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         print(f"Computed {len(df_pooled)} method-outcome combinations")
@@ -196,7 +276,7 @@ def main() -> None:
 
     # Run diagnostics if requested
     if args.diagnostics:
-        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type)
+        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type, out_dir=str(args.output_dir))
 
     # Prepare volcano plot data
     print("\nPreparing volcano plot data...")
@@ -206,8 +286,8 @@ def main() -> None:
         p_col="p_value",
         method_col="method",
         outcome_col="outcome",
-        adjust="bh",
-        adjust_per="by_method",
+        adjust=args.adjust,
+        adjust_per=args.adjust_per,
         effect_alias=effect_alias,
     )
 
@@ -329,6 +409,34 @@ def main() -> None:
         print(f"Saved interactive overlay to: {overlay_html}")
     except ValueError as err:
         print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+
+    # Create IPW vs TMLE correlation plot for the chosen effect
+    print("\nCreating IPW vs TMLE correlation plot...")
+    try:
+        # For log-RR, display correlation on log10 scale (linear axes), for clarity
+        corr_transform = "log10" if xscale in {"log"} else None
+        fig_corr, ax_corr = plot_method_correlation(
+            df_volcano_enriched,
+            methods=("IPW", "TMLE"),
+            method_col="method",
+            outcome_col="outcome",
+            effect_col=effect_col,
+            effect_label=effect_label,
+            xscale="linear",
+            transform=corr_transform,
+            clip_quantiles=(0.005, 0.995),
+            hexbin=False,
+            point_size=22,
+            alpha=0.65,
+            significance_col="q_value",
+            alpha_threshold=DEFAULT_ALPHA,
+        )
+        corr_png = args.output_dir / f"correlation_{output_suffix}.png"
+        fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
+        print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
+        plt.close(fig_corr)
+    except ValueError as err:
+        print(f"Skipping correlation plot: {err}")
 
     # Create main volcano plot (Matplotlib)
     print("\nCreating volcano plot...")

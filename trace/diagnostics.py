@@ -7,6 +7,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+import matplotlib.pyplot as plt
 
 from trace.statistics import inv_logit, logit, se_from_prob_ci_on_logit
 
@@ -319,8 +320,114 @@ def deep_dive_extreme_case(df_pooled: pd.DataFrame, df_with_arms: pd.DataFrame) 
     print(f"      Match p_value: {matches_p_value}")
 
 
+def plot_std_comparison(
+    df_pooled: pd.DataFrame,
+    df_with_arms: pd.DataFrame,
+    group_cols: tuple[str, str] = ("method", "outcome"),
+) -> "plt.Figure":
+    """
+    Compare per-run arm-level logit SEs (median across runs) against pooled arm-level SEs.
+
+    Returns a Matplotlib Figure with two panels (arm1, arm0) when available.
+    """
+    required_cols = {
+        "effect_1_CI95_lower",
+        "effect_1_CI95_upper",
+        "effect_0_CI95_lower",
+        "effect_0_CI95_upper",
+        group_cols[0],
+        group_cols[1],
+    }
+    missing = required_cols - set(df_with_arms.columns)
+    if missing:
+        raise ValueError(
+            "plot_std_comparison missing required columns in df_with_arms: "
+            + ", ".join(sorted(missing))
+        )
+
+    d = df_with_arms.copy()
+    d["se_eta1"] = se_from_prob_ci_on_logit(d["effect_1_CI95_lower"], d["effect_1_CI95_upper"])
+    d["se_eta0"] = se_from_prob_ci_on_logit(d["effect_0_CI95_lower"], d["effect_0_CI95_upper"])
+
+    group_list = list(group_cols)
+    per_group = (
+        d.groupby(group_list, dropna=False)
+        .agg(
+            se_eta1_median=("se_eta1", "median"),
+            se_eta0_median=("se_eta0", "median"),
+            n_runs=("se_eta1", "count"),
+        )
+        .reset_index()
+    )
+
+    merged = per_group.merge(df_pooled, on=group_list, how="inner")
+
+    panels = []
+    if {"se_eta1_median", "eta1_pooled_se"}.issubset(merged.columns):
+        panels.append(("Arm 1 (treatment)", "se_eta1_median", "eta1_pooled_se"))
+    if {"se_eta0_median", "eta0_pooled_se"}.issubset(merged.columns):
+        panels.append(("Arm 0 (control)", "se_eta0_median", "eta0_pooled_se"))
+
+    if not panels:
+        raise ValueError(
+            "plot_std_comparison could not find pooled arm SEs in df_pooled "
+            "(expected: eta1_pooled_se and/or eta0_pooled_se)."
+        )
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 5), dpi=120)
+    if len(panels) == 1:
+        axes = [axes]
+
+    methods = merged[group_cols[0]].dropna().unique().tolist()
+    palette = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    color_map = {m: palette[i % len(palette)] for i, m in enumerate(methods)}
+
+    for ax, (title, xcol, ycol) in zip(axes, panels):
+        data = merged[[*group_cols, xcol, ycol]].replace([np.inf, -np.inf], np.nan).dropna(subset=[xcol, ycol])
+        if data.empty:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            continue
+
+        x = data[xcol].values
+        y = data[ycol].values
+        xy_min = float(np.nanmin([np.nanmin(x), np.nanmin(y)]))
+        xy_max = float(np.nanmax([np.nanmax(x), np.nanmax(y)]))
+        pad = 0.05 * (xy_max - xy_min if xy_max > xy_min else 1.0)
+        lo, hi = max(0.0, xy_min - pad), xy_max + pad
+        ax.plot([lo, hi], [lo, hi], ls="--", color="#888888", lw=1, label="y = x")
+
+        for m in methods:
+            dm = data[data[group_cols[0]] == m]
+            if dm.empty:
+                continue
+            ax.scatter(dm[xcol], dm[ycol], s=28, alpha=0.75, color=color_map[m], label=str(m))
+
+        r2 = np.nan
+        if len(x) >= 2:
+            with np.errstate(invalid="ignore"):
+                r = np.corrcoef(x, y)[0, 1]
+            r2 = float(r * r) if np.isfinite(r) else np.nan
+
+        ax.set_title(f"{title}  (R² = {r2:.3f})" if np.isfinite(r2) else f"{title}  (R² = NA)")
+        ax.set_xlabel("Median per-run SE (logit)")
+        ax.set_ylabel("Pooled SE (logit)")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.grid(True, ls=":", alpha=0.4)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 4), frameon=False)
+        fig.subplots_adjust(top=0.85)
+
+    fig.tight_layout()
+    return fig
+
 def run_diagnostics(
-    df_pooled: pd.DataFrame, df_with_arms: pd.DataFrame, effect_type: str = "RD"
+    df_pooled: pd.DataFrame,
+    df_with_arms: pd.DataFrame,
+    effect_type: str = "RD",
+    out_dir: str | None = None,
 ) -> None:
     """Run all diagnostic analyses on pooled results.
 
@@ -339,5 +446,16 @@ def run_diagnostics(
     # Deep dive only available for RD
     if effect_type == "RD":
         deep_dive_extreme_case(df_pooled, df_with_arms)
+
+    # Std comparison figure (arm-level, logit scale)
+    if out_dir:
+        try:
+            fig_std = plot_std_comparison(df_pooled, df_with_arms, group_cols=("method", "outcome"))
+            out_path = f"{out_dir}/std_comparison_{effect_type.lower()}.png"
+            fig_std.savefig(out_path, dpi=300, bbox_inches="tight")
+            plt.close(fig_std)
+            print(f"\nSaved std comparison figure to: {out_path}")
+        except Exception as err:
+            print(f"\nSkipping std comparison figure: {err}")
 
     print("\n" + "=" * 70)
