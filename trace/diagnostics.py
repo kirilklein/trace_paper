@@ -9,7 +9,7 @@ import pandas as pd
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 
-from trace.statistics import inv_logit, logit, se_from_prob_ci_on_logit
+from trace.statistics import inv_logit, logit, compute_logit_se_from_ci
 
 
 def print_pooled_diagnostics(df_pooled: pd.DataFrame) -> None:
@@ -243,11 +243,11 @@ def deep_dive_extreme_case(df_pooled: pd.DataFrame, df_with_arms: pd.DataFrame) 
         print(f"      CI widths: effect_1={ci_width_1:.6f}, effect_0={ci_width_0:.6f}")
 
         eta1 = logit(row["effect_1"])
-        se_eta1 = se_from_prob_ci_on_logit(
+        se_eta1 = compute_logit_se_from_ci(
             row["effect_1_CI95_lower"], row["effect_1_CI95_upper"]
         )
         eta0 = logit(row["effect_0"])
-        se_eta0 = se_from_prob_ci_on_logit(
+        se_eta0 = compute_logit_se_from_ci(
             row["effect_0_CI95_lower"], row["effect_0_CI95_upper"]
         )
         eta1_vals.append(eta1)
@@ -346,10 +346,10 @@ def plot_std_comparison(
         )
 
     d = df_with_arms.copy()
-    d["se_eta1"] = se_from_prob_ci_on_logit(
+    d["se_eta1"] = compute_logit_se_from_ci(
         d["effect_1_CI95_lower"], d["effect_1_CI95_upper"]
     )
-    d["se_eta0"] = se_from_prob_ci_on_logit(
+    d["se_eta0"] = compute_logit_se_from_ci(
         d["effect_0_CI95_lower"], d["effect_0_CI95_upper"]
     )
 
