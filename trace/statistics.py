@@ -23,7 +23,7 @@ Workflow:
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -78,16 +78,113 @@ def add_logit_arm_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _pool_rubins_rules(
+    yi: np.ndarray, vi: np.ndarray, m: int
+) -> Tuple[float, float, float, float]:
+    """
+    Pools using Rubin's Rules, combining within- and between-run variance.
+    This is a conservative method that matches the user's request.
+    """
+    theta = float(np.mean(yi))
+    if m < 2:
+        return theta, np.nan, np.nan, np.nan
+
+    q_bar = float(np.mean(vi))  # Mean within-run variance
+    b = float(np.var(yi, ddof=1))  # Between-run variance
+
+    # Total Variance = (Mean Within-Var) + (Between-Var) * (1 + 1/m)
+    total_var = q_bar + (1.0 + 1.0 / m) * b
+    se_hat = np.sqrt(total_var) if total_var >= 0 else np.nan
+
+    # Degrees of freedom for Rubin's rules is complex,
+    # using (m-1) as a simple, conservative approximation.
+    df_s = m - 1
+    tau2 = b  # The between-run variance is the estimate for tau2
+    return theta, se_hat, tau2, df_s
+
+
+def _pool_simple_mean(yi: np.ndarray, m: int) -> Tuple[float, float, float, float]:
+    """
+    Pools using a simple unweighted mean.
+    SE is the standard error of the mean, ignoring within-run variance.
+    """
+    theta = float(np.mean(yi))
+    if m >= 2:
+        se_hat = float(np.std(yi, ddof=1)) / np.sqrt(m)
+        df_s = m - 1
+    else:
+        se_hat = np.nan
+        df_s = np.nan
+    tau2 = np.nan  # Not calculated
+    return theta, se_hat, tau2, df_s
+
+
+def _pool_hksj(
+    yi: np.ndarray, vi: np.ndarray, m: int
+) -> Tuple[float, float, float, float]:
+    """
+    Pools using DerSimonian-Laird random effects with HKSJ adjustment.
+    This is a standard, robust meta-analysis method.
+    """
+    if m == 0:
+        return np.nan, np.nan, np.nan, np.nan
+
+    with np.errstate(divide="ignore"):
+        wi = np.where(vi > 0, 1.0 / vi, 0.0)
+    weight_sum = np.sum(wi)
+    if weight_sum <= 0:
+        # Fallback to simple mean if all variances are zero/invalid
+        return _pool_simple_mean(yi, m)
+
+    # 1. Estimate Tau^2 (Heterogeneity) using DerSimonian-Laird
+    theta_fe = np.sum(wi * yi) / weight_sum
+    q = np.sum(wi * (yi - theta_fe) ** 2)
+    df_q = m - 1
+    c = weight_sum - (np.sum(wi**2) / weight_sum)
+    tau2 = max((q - df_q) / c, 0.0) if c > 0 else 0.0
+
+    # 2. Random Effects Weights
+    with np.errstate(divide="ignore"):
+        w_star = np.where((vi + tau2) > 0, 1.0 / (vi + tau2), 0.0)
+    w_star_sum = np.sum(w_star)
+
+    if w_star_sum <= 0:
+        # Fallback to simple mean
+        return _pool_simple_mean(yi, m)
+
+    # 3. Weighted Mean
+    theta_hat = np.sum(w_star * yi) / w_star_sum
+
+    # 4. HKSJ Standard Error Adjustment
+    if m < 2:
+        se_hksj = np.sqrt(1.0 / w_star_sum) if w_star_sum > 0 else np.nan
+        df_s = np.nan
+        return theta_hat, se_hksj, tau2, df_s
+
+    num = np.sum(w_star * (yi - theta_hat) ** 2)
+    den = (m - 1) * w_star_sum
+
+    if den > 0:
+        se_hksj = np.sqrt(num / den)
+    else:
+        se_hksj = np.sqrt(1.0 / w_star_sum)  # Fallback
+
+    df_s = m - 1
+    return theta_hat, se_hksj, tau2, df_s
+
+
 def pool_arm_logits(
     df: pd.DataFrame,
     group_cols: Union[str, List[str]],
     eta_col: str,
     se_col: str,
     out_prefix: str,
-    pooling: Literal["simple_mean"] = "simple_mean",
+    pooling: Literal[
+        "simple_mean", "rubins_rules", "random_effects_hksj"
+    ] = "random_effects_hksj",
 ) -> pd.DataFrame:
     """
-    Pools logit estimates within groups.
+    Pools logit estimates within groups using the specified method.
     """
     group_cols_list = [group_cols] if isinstance(group_cols, str) else list(group_cols)
 
@@ -101,8 +198,8 @@ def pool_arm_logits(
             out_prefix: np.nan,
             f"{out_prefix}_se": np.nan,
             f"{out_prefix}_tau2": np.nan,
-            "n_runs_used": m,  # This 'm' is what we'll use
-            "df": np.nan,  # 'df' column is no longer used but harmless
+            "n_runs_used": m,
+            "df": np.nan,  # This 'df' column is for diagnostics
             "method_used": pooling,
         }
 
@@ -110,23 +207,28 @@ def pool_arm_logits(
             return pd.Series(result)
 
         yi = cleaned[eta_col].astype(float).values
+        vi = cleaned[se_col].astype(float).values ** 2
 
         if pooling == "simple_mean":
-            theta = float(np.mean(yi))
-            if m >= 2:
-                se_hat = float(np.std(yi, ddof=1)) / np.sqrt(m)
-                df_s = m - 1
-            else:
-                se_hat = np.nan
-                df_s = np.nan
+            theta, se_hat, tau2, df_s = _pool_simple_mean(yi, m)
 
-            # We still set 'df' for diagnostic purposes, but our
-            # p-value function will use 'n_runs_used' (m) directly.
-            result.update({out_prefix: theta, f"{out_prefix}_se": se_hat, "df": df_s})
+        elif pooling == "rubins_rules":
+            theta, se_hat, tau2, df_s = _pool_rubins_rules(yi, vi, m)
+
+        elif pooling == "random_effects_hksj":
+            theta, se_hat, tau2, df_s = _pool_hksj(yi, vi, m)
 
         else:
             raise ValueError(f"Invalid pooling method: {pooling}")
 
+        result.update(
+            {
+                out_prefix: theta,
+                f"{out_prefix}_se": se_hat,
+                f"{out_prefix}_tau2": tau2,
+                "df": df_s,
+            }
+        )
         return pd.Series(result)
 
     return (
@@ -183,10 +285,15 @@ def _compute_logit_difference_p_value(
 
     # --- Case A: Use t-distribution ---
     # True only if df_logit is a valid number (>= 1)
-    use_t_dist_mask = np.isfinite(degrees_of_freedom) & (degrees_of_freedom >= 1) & np.isfinite(stat)
+    use_t_dist_mask = (
+        np.isfinite(degrees_of_freedom) & (degrees_of_freedom >= 1) & np.isfinite(stat)
+    )
     if use_t_dist_mask.any():
         p_vals[use_t_dist_mask] = 2.0 * (
-            1.0 - tdist.cdf(np.abs(stat[use_t_dist_mask]), df=degrees_of_freedom[use_t_dist_mask])
+            1.0
+            - tdist.cdf(
+                np.abs(stat[use_t_dist_mask]), df=degrees_of_freedom[use_t_dist_mask]
+            )
         )
         crit_val[use_t_dist_mask] = tdist.ppf(
             1 - alpha / 2, df=degrees_of_freedom[use_t_dist_mask]

@@ -117,8 +117,9 @@ def main() -> None:
             "fixed_effect",
             "correlation_adjusted",
             "simple_mean",
+            "rubins_rules",
         ],
-        default="random_effects_hksj",
+        default="simple_mean",
         help=(
             "Arm-level pooling on the logit scale across runs: "
             "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
