@@ -24,7 +24,7 @@ Workflow:
 from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional, Tuple, Union
-
+from statsmodels.stats.meta_analysis import combine_effects
 import numpy as np
 import pandas as pd
 from scipy.special import expit as inv_logit
@@ -82,8 +82,22 @@ def _pool_rubins_rules(
     yi: np.ndarray, vi: np.ndarray, m: int
 ) -> Tuple[float, float, float, float]:
     """
-    Pools using Rubin's Rules, combining within- and between-run variance.
-    This is a conservative method that matches the user's request.
+    Pools using Rubin's Rules for multiple imputation.
+
+    This method uses the formula: V + (1 + 1/m) * B
+    where:
+    - V: Mean within-run variance (average of individual run variances)
+    - B: Between-run variance (variance of the run means)
+    - m: Number of runs
+
+    The (1 + 1/m) factor inflates the between-run variance to account for
+    finite number of imputations, making it more conservative than V + B.
+
+    Returns:
+        theta: Pooled mean estimate
+        se_hat: Standard error = sqrt(V + (1 + 1/m) * B)
+        tau2: Between-run variance (B)
+        df_s: Degrees of freedom (m - 1, conservative approximation)
     """
     theta = float(np.mean(yi))
     if m < 2:
@@ -91,7 +105,6 @@ def _pool_rubins_rules(
 
     q_bar = float(np.mean(vi))  # Mean within-run variance
     b = float(np.var(yi, ddof=1))  # Between-run variance
-
     # Total Variance = (Mean Within-Var) + (Between-Var) * (1 + 1/m)
     total_var = q_bar + (1.0 + 1.0 / m) * b
     se_hat = np.sqrt(total_var) if total_var >= 0 else np.nan
@@ -103,10 +116,50 @@ def _pool_rubins_rules(
     return theta, se_hat, tau2, df_s
 
 
+def _pool_inter_intra_variance(
+    yi: np.ndarray, vi: np.ndarray, m: int
+) -> Tuple[float, float, float, float]:
+    """
+    Pools using simple sum of within- and between-run variance: V + B.
+
+    This method combines:
+    - V: Mean within-run variance (average of individual run variances)
+    - B: Between-run variance (variance of the run means)
+
+    Returns:
+        theta: Pooled mean estimate
+        se_hat: Standard error = sqrt((V + B) / m)
+        tau2: Between-run variance (B)
+        df_s: Degrees of freedom (m - 1)
+    """
+    theta = float(np.mean(yi))
+    if m < 2:
+        return theta, np.nan, np.nan, np.nan
+
+    V = float(np.mean(vi))  # Mean within-run variance
+    B = float(np.var(yi, ddof=1))  # Between-run variance
+    combined_var = V + B
+    se_hat = np.sqrt(combined_var / m) if combined_var >= 0 else np.nan
+    df_s = m - 1
+    tau2 = B  # The between-run variance
+    return theta, se_hat, tau2, df_s
+
+
 def _pool_simple_mean(yi: np.ndarray, m: int) -> Tuple[float, float, float, float]:
     """
-    Pools using a simple unweighted mean.
-    SE is the standard error of the mean, ignoring within-run variance.
+    Pools using a simple unweighted mean (ignores within-run variance).
+
+    This method only considers the variability between run means:
+    - SE = std(yi) / sqrt(m)
+
+    Note: This method does NOT use within-run variance (vi) at all.
+    It only reflects the uncertainty from variation between runs.
+
+    Returns:
+        theta: Pooled mean estimate
+        se_hat: Standard error of the mean = std(yi) / sqrt(m)
+        tau2: Not calculated (set to NaN)
+        df_s: Degrees of freedom (m - 1)
     """
     theta = float(np.mean(yi))
     if m >= 2:
@@ -123,53 +176,35 @@ def _pool_hksj(
     yi: np.ndarray, vi: np.ndarray, m: int
 ) -> Tuple[float, float, float, float]:
     """
-    Pools using DerSimonian-Laird random effects with HKSJ adjustment.
-    This is a standard, robust meta-analysis method.
+    Pools using random-effects meta-analysis with Hartung-Knapp-Sidik-Jonkman (HKSJ) adjustment.
+
+    This method:
+    1. Estimates between-study heterogeneity (tau²) using DerSimonian-Laird method
+    2. Applies HKSJ adjustment to the standard error for improved small-sample performance
+    3. Uses inverse-variance weighting with random effects
+
+    Returns:
+        theta_hat: Pooled mean estimate (random effects)
+        se_hksj: HKSJ-adjusted standard error
+        tau2: Between-study variance (DL estimate)
+        df_s: Degrees of freedom (m - 1)
     """
-    if m == 0:
-        return np.nan, np.nan, np.nan, np.nan
+    # sanitize
+    yi = np.asarray(yi, dtype=float)
+    vi = np.asarray(vi, dtype=float)
+    mask = np.isfinite(yi) & np.isfinite(vi) & (vi > 0)
+    if mask.sum() == 0:
+        raise ValueError("No valid (finite, positive-variance) studies.")
+    yi, vi = yi[mask], vi[mask]
 
-    with np.errstate(divide="ignore"):
-        wi = np.where(vi > 0, 1.0 / vi, 0.0)
-    weight_sum = np.sum(wi)
-    if weight_sum <= 0:
-        # Fallback to simple mean if all variances are zero/invalid
-        return _pool_simple_mean(yi, m)
+    # run meta-analysis (DL tau^2 to mirror your implementation)
+    res = combine_effects(yi, vi, method_re="dl", use_t=False)
+    # map to your outputs
+    theta_hat = float(res.mean_effect_re)
+    tau2 = float(res.tau2)  # between-study variance
+    se_hksj = float(res.sd_eff_w_re_hksj)  # HKSJ-adjusted SE
+    df_s = float(res.df_resid)  # m-1
 
-    # 1. Estimate Tau^2 (Heterogeneity) using DerSimonian-Laird
-    theta_fe = np.sum(wi * yi) / weight_sum
-    q = np.sum(wi * (yi - theta_fe) ** 2)
-    df_q = m - 1
-    c = weight_sum - (np.sum(wi**2) / weight_sum)
-    tau2 = max((q - df_q) / c, 0.0) if c > 0 else 0.0
-
-    # 2. Random Effects Weights
-    with np.errstate(divide="ignore"):
-        w_star = np.where((vi + tau2) > 0, 1.0 / (vi + tau2), 0.0)
-    w_star_sum = np.sum(w_star)
-
-    if w_star_sum <= 0:
-        # Fallback to simple mean
-        return _pool_simple_mean(yi, m)
-
-    # 3. Weighted Mean
-    theta_hat = np.sum(w_star * yi) / w_star_sum
-
-    # 4. HKSJ Standard Error Adjustment
-    if m < 2:
-        se_hksj = np.sqrt(1.0 / w_star_sum) if w_star_sum > 0 else np.nan
-        df_s = np.nan
-        return theta_hat, se_hksj, tau2, df_s
-
-    num = np.sum(w_star * (yi - theta_hat) ** 2)
-    den = (m - 1) * w_star_sum
-
-    if den > 0:
-        se_hksj = np.sqrt(num / den)
-    else:
-        se_hksj = np.sqrt(1.0 / w_star_sum)  # Fallback
-
-    df_s = m - 1
     return theta_hat, se_hksj, tau2, df_s
 
 
@@ -180,7 +215,7 @@ def pool_arm_logits(
     se_col: str,
     out_prefix: str,
     pooling: Literal[
-        "simple_mean", "rubins_rules", "random_effects_hksj"
+        "simple_mean", "rubins_rules", "random_effects_hksj", "inter_intra_variance"
     ] = "random_effects_hksj",
 ) -> pd.DataFrame:
     """
@@ -217,7 +252,8 @@ def pool_arm_logits(
 
         elif pooling == "random_effects_hksj":
             theta, se_hat, tau2, df_s = _pool_hksj(yi, vi, m)
-
+        elif pooling == "inter_intra_variance":
+            theta, se_hat, tau2, df_s = _pool_inter_intra_variance(yi, vi, m)
         else:
             raise ValueError(f"Invalid pooling method: {pooling}")
 
@@ -309,6 +345,11 @@ def _compute_logit_difference_p_value(
     # 5. Calculate CIs on the logit scale
     ci_lo = diff_logit - crit_val * diff_se
     ci_hi = diff_logit + crit_val * diff_se
+
+    # Diagnostic: check outputs
+    print(
+        f"  Output p_value: #nan={np.isnan(p_vals).sum()}, #inf={np.isinf(p_vals).sum()}, finite={np.isfinite(p_vals).sum()}/{len(p_vals)}"
+    )
 
     # 6. Store Results
     return {
