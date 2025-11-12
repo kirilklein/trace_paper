@@ -114,7 +114,6 @@ def main() -> None:
         "--arm-pooling",
         choices=[
             "random_effects_hksj",
-            "fixed_effect",
             "correlation_adjusted",
             "simple_mean",
             "rubins_rules",
@@ -124,7 +123,6 @@ def main() -> None:
         help=(
             "Arm-level pooling on the logit scale across runs: "
             "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
-            "'fixed_effect' (inverse-variance fixed effect) or "
             "'correlation_adjusted' (uses weights and rho) or "
             "'simple_mean' (unweighted mean of logits; SEM uses sample std with ddof=1)"
         ),
