@@ -150,6 +150,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Construct output directory
+    input_folder_name = args.input_dir.name
+    output_dir = args.output_dir / input_folder_name / args.adjust / args.arm_pooling
+
     # Construct file paths
     estimates_path = args.input_dir / "combined_estimates.txt"
     stats_path = args.input_dir / "combined_stats.txt"
@@ -180,7 +184,7 @@ def main() -> None:
 
     print(f"Effect type: {effect_type}")
     print(f"Input directory: {args.input_dir}")
-    print(f"Output directory: {args.output_dir}")
+    print(f"Output directory: {output_dir}")
     diagnostics_status = "enabled" if args.diagnostics else "disabled"
     print(f"Diagnostics: {diagnostics_status}")
     print()
@@ -292,7 +296,7 @@ def main() -> None:
             df_pooled,
             df_with_arms,
             effect_type=effect_type,
-            out_dir=str(args.output_dir),
+            out_dir=str(output_dir),
         )
 
     # Prepare volcano plot data
@@ -363,7 +367,7 @@ def main() -> None:
         return_confusion=True,
     )
 
-    ensure_output_directory(args.output_dir)
+    ensure_output_directory(output_dir)
 
     # Save confusion matrix as heatmap
     if confusion_result:
@@ -377,7 +381,7 @@ def main() -> None:
             method_b="IPW",
         )
 
-        confusion_png = args.output_dir / f"confusion_matrix_{output_suffix}.png"
+        confusion_png = output_dir / f"confusion_matrix_{output_suffix}.png"
         fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
         print(f"Saved confusion matrix to: {confusion_png}")
         plt.close(fig_cm)
@@ -403,9 +407,7 @@ def main() -> None:
             effect_col=effect_col,
             effect_label=effect_label,
         )
-        overlay_png = (
-            args.output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
-        )
+        overlay_png = output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
         fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
         print(f"Saved overlay plot to: {overlay_png}")
         plt.close(fig_overlay)
@@ -428,7 +430,7 @@ def main() -> None:
             xscale=xscale,
         )
         overlay_html = (
-            args.output_dir
+            output_dir
             / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
         )
         save_plotly_figure(
@@ -461,7 +463,7 @@ def main() -> None:
             significance_col="q_value",
             alpha_threshold=DEFAULT_ALPHA,
         )
-        corr_png = args.output_dir / f"correlation_{output_suffix}.png"
+        corr_png = output_dir / f"correlation_{output_suffix}.png"
         fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
         print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
         plt.close(fig_corr)
@@ -486,7 +488,7 @@ def main() -> None:
         xscale=xscale,
     )
 
-    output_path_png = args.output_dir / f"volcano_plot_{output_suffix}.png"
+    output_path_png = output_dir / f"volcano_plot_{output_suffix}.png"
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
     print(f"Saved plot to: {output_path_png}")
 
@@ -503,7 +505,7 @@ def main() -> None:
         xscale=xscale,
     )
 
-    plotly_html = args.output_dir / f"volcano_plot_{output_suffix}_interactive.html"
+    plotly_html = output_dir / f"volcano_plot_{output_suffix}_interactive.html"
     save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
     print(f"Saved interactive plot to: {plotly_html}")
 
