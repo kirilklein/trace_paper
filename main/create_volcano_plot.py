@@ -36,7 +36,7 @@ from trace.plotting.volcano import (
     volcano_overlay_methods,
     volcano_plot_per_method,
 )
-from trace.plotting.volcano_plotly import (
+from trace.plotting.volcano_plotly_filter import (
     build_plotly_overlay_methods,
     build_plotly_volcano,
     save_plotly_figure,
@@ -60,19 +60,19 @@ def main() -> None:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("data/semaglutide"),
+        default=Path("data/cvd"),
         help="Directory containing input data files",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("figures"),
+        default=Path("figures/cvd_RR"),
         help="Directory for output figures",
     )
     parser.add_argument(
         "--effect-type",
         choices=["RD", "RR", "log-RR"],
-        default="RD",
+        default="RR",
         help="Effect measure: Risk Difference (RD), Risk Ratio (RR), or log Risk Ratio",
     )
     parser.add_argument(
@@ -81,11 +81,17 @@ def main() -> None:
         default=True,
         help="Run diagnostic analyses",
     )
+    parser.add_argument(
+        "--title",
+        type=str,
+        default="CVD",
+        help="Title to display above the plots",
+    )
 
     args = parser.parse_args()
 
     # Construct file paths
-    estimates_path = args.input_dir / "combined_estimatest.txt"
+    estimates_path = args.input_dir / "combined_estimates.txt"
     stats_path = args.input_dir / "combined_stats.txt"
 
     # Determine effect parameters
@@ -292,6 +298,7 @@ def main() -> None:
             point_size=45,
             effect_col=effect_col,
             effect_label=effect_label,
+            title=args.title,
         )
         overlay_png = (
             args.output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
@@ -316,6 +323,7 @@ def main() -> None:
             effect_label=effect_label,
             null_value=null_value,
             xscale=xscale,
+            title=args.title,
         )
         overlay_html = (
             args.output_dir
@@ -346,6 +354,7 @@ def main() -> None:
         effect_label=effect_label,
         null_value=null_value,
         xscale=xscale,
+        title=args.title,
     )
 
     output_path_png = args.output_dir / f"volcano_plot_{output_suffix}.png"
@@ -363,6 +372,7 @@ def main() -> None:
         effect_label=effect_label,
         null_value=null_value,
         xscale=xscale,
+        title=args.title,
     )
 
     plotly_html = args.output_dir / f"volcano_plot_{output_suffix}_interactive.html"

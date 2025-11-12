@@ -182,6 +182,7 @@ def volcano_plot_per_method(
     effect_label: str = "Risk difference (RD)",
     null_value: Optional[float] = 0.0,
     xscale: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> Tuple[Figure, list]:
     """
     Create volcano plots with one panel per method.
@@ -322,6 +323,8 @@ def volcano_plot_per_method(
             loc="upper right",
             title="BH-adjusted q",
         )
+    if title:
+        fig.suptitle(title, fontsize=16, y=1.0)
     fig.tight_layout()
     return fig, axes
 
@@ -345,6 +348,7 @@ def volcano_overlay_methods(
     line_width: float = 1.0,
     label_map: Optional[Dict[str, str]] = None,
     annotate_top_n: int = 0,
+    title: Optional[str] = None,
 ) -> Tuple[Figure, Axes]:
     """Overlay two methods (default: TMLE and IPW) on one volcano panel.
 
@@ -458,6 +462,8 @@ def volcano_overlay_methods(
     ax.axvline(0.0, linestyle="--", linewidth=1, color="gray", alpha=0.5)
     ax.grid(alpha=0.2, linestyle=":", linewidth=0.8)
     ax.legend(title="Method")
+    if title:
+        fig.suptitle(title, fontsize=16, y=1.0)
     fig.tight_layout()
 
     return fig, ax
