@@ -118,6 +118,7 @@ def main() -> None:
             "correlation_adjusted",
             "simple_mean",
             "rubins_rules",
+            "inter_intra_variance",
         ],
         default="simple_mean",
         help=(
@@ -146,6 +147,18 @@ def main() -> None:
             "Optional column name for run weights/sizes used by "
             "'correlation_adjusted' arm pooling. Defaults to equal weights."
         ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Verbose output",
+    )
+    parser.add_argument(
+        "--fast",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fast mode: only produce the main volcano plot PNG, skip all other outputs",
     )
 
     args = parser.parse_args()
@@ -187,6 +200,8 @@ def main() -> None:
     print(f"Output directory: {output_dir}")
     diagnostics_status = "enabled" if args.diagnostics else "disabled"
     print(f"Diagnostics: {diagnostics_status}")
+    if args.fast:
+        print("Fast mode: enabled (skipping extra plots)")
     print()
 
     # Load data
@@ -290,8 +305,8 @@ def main() -> None:
                     f"{n_heterogeneous}"
                 )
 
-    # Run diagnostics if requested
-    if args.diagnostics:
+    # Run diagnostics if requested (skip in fast mode)
+    if args.diagnostics and not args.fast:
         run_diagnostics(
             df_pooled,
             df_with_arms,
@@ -346,6 +361,12 @@ def main() -> None:
         )
         print(f"Remaining: {n_after} outcomes")
 
+    # Save enriched dataframe with all computed statistics
+    ensure_output_directory(output_dir)
+    enriched_output_path = output_dir / f"combined_results_{output_suffix}.csv"
+    df_volcano_enriched.to_csv(enriched_output_path, index=False)
+    print(f"\nSaved combined results to: {enriched_output_path}")
+
     # Summary statistics
     print("\nSummary statistics:")
     for method in df_volcano_enriched["method"].unique():
@@ -355,122 +376,127 @@ def main() -> None:
             f"  {method}: {len(d)} outcomes, {n_sig} significant (q < {DEFAULT_ALPHA})"
         )
 
-    # Confusion matrix
-    print("\nTMLE vs IPW significance confusion matrix:")
-    confusion_result = print_significance_confusion_matrix(
-        df_volcano_enriched,
-        methods=("TMLE", "IPW"),
-        method_col="method",
-        outcome_col="outcome",
-        q_col="q_value",
-        alpha=DEFAULT_ALPHA,
-        return_confusion=True,
-    )
-
-    ensure_output_directory(output_dir)
-
-    # Save confusion matrix as heatmap
-    if confusion_result:
-        confusion_df, agreement, n_overlap = confusion_result
-
-        fig_cm = plot_confusion_matrix(
-            confusion_df,
-            agreement,
-            n_overlap,
-            method_a="TMLE",
-            method_b="IPW",
-        )
-
-        confusion_png = output_dir / f"confusion_matrix_{output_suffix}.png"
-        fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
-        print(f"Saved confusion matrix to: {confusion_png}")
-        plt.close(fig_cm)
-
-    outcome_label_map = (
-        df_volcano_enriched.dropna(subset=["outcome_label"])
-        .drop_duplicates("outcome")
-        .set_index("outcome")["outcome_label"]
-        .to_dict()
-    )
-
-    # Create overlay plot (Matplotlib)
-    print("\nCreating TMLE vs IPW overlay plot...")
-    try:
-        fig_overlay, _ = volcano_overlay_methods(
+    # Confusion matrix (skip in fast mode)
+    if not args.fast:
+        print("\nTMLE vs IPW significance confusion matrix:")
+        confusion_result = print_significance_confusion_matrix(
             df_volcano_enriched,
             methods=("TMLE", "IPW"),
             method_col="method",
             outcome_col="outcome",
-            label_map=outcome_label_map,
-            annotate_top_n=10,
-            point_size=45,
-            effect_col=effect_col,
-            effect_label=effect_label,
+            q_col="q_value",
+            alpha=DEFAULT_ALPHA,
+            return_confusion=True,
         )
-        overlay_png = output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
-        fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
-        print(f"Saved overlay plot to: {overlay_png}")
-        plt.close(fig_overlay)
-    except ValueError as err:
-        print(f"Skipping TMLE vs IPW overlay plot: {err}")
 
-    # Create overlay plot (Plotly)
-    print("\nCreating TMLE vs IPW overlay plot (interactive)...")
-    try:
-        plotly_overlay = build_plotly_overlay_methods(
-            df_volcano_enriched,
-            methods=("TMLE", "IPW"),
-            method_col="method",
-            outcome_col="outcome",
-            label_map=outcome_label_map,
-            marker_size=9,
-            effect_col=effect_col,
-            effect_label=effect_label,
-            null_value=null_value,
-            xscale=xscale,
-        )
-        overlay_html = (
-            output_dir
-            / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
-        )
-        save_plotly_figure(
-            plotly_overlay,
-            html_path=overlay_html,
-            png_path=None,
-        )
-        print(f"Saved interactive overlay to: {overlay_html}")
-    except ValueError as err:
-        print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+        # Save confusion matrix as heatmap
+        if confusion_result:
+            confusion_df, agreement, n_overlap = confusion_result
 
-    # Create IPW vs TMLE correlation plot for the chosen effect
-    print("\nCreating IPW vs TMLE correlation plot...")
-    try:
-        # For log-RR, display correlation on log10 scale (linear axes), for clarity
-        corr_transform = "log10" if xscale in {"log"} else None
-        fig_corr, ax_corr = plot_method_correlation(
-            df_volcano_enriched,
-            methods=("IPW", "TMLE"),
-            method_col="method",
-            outcome_col="outcome",
-            effect_col=effect_col,
-            effect_label=effect_label,
-            xscale="linear",
-            transform=corr_transform,
-            clip_quantiles=(0.005, 0.995),
-            hexbin=False,
-            point_size=22,
-            alpha=0.65,
-            significance_col="q_value",
-            alpha_threshold=DEFAULT_ALPHA,
-        )
-        corr_png = output_dir / f"correlation_{output_suffix}.png"
-        fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
-        print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
-        plt.close(fig_corr)
-    except ValueError as err:
-        print(f"Skipping correlation plot: {err}")
+            fig_cm = plot_confusion_matrix(
+                confusion_df,
+                agreement,
+                n_overlap,
+                method_a="TMLE",
+                method_b="IPW",
+            )
 
-    # Create main volcano plot (Matplotlib)
+            ensure_output_directory(output_dir)
+            confusion_png = output_dir / f"confusion_matrix_{output_suffix}.png"
+            fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
+            print(f"Saved confusion matrix to: {confusion_png}")
+            plt.close(fig_cm)
+
+    # Skip overlay and correlation plots in fast mode
+    if not args.fast:
+        outcome_label_map = (
+            df_volcano_enriched.dropna(subset=["outcome_label"])
+            .drop_duplicates("outcome")
+            .set_index("outcome")["outcome_label"]
+            .to_dict()
+        )
+
+        # Create overlay plot (Matplotlib)
+        print("\nCreating TMLE vs IPW overlay plot...")
+        try:
+            fig_overlay, _ = volcano_overlay_methods(
+                df_volcano_enriched,
+                methods=("TMLE", "IPW"),
+                method_col="method",
+                outcome_col="outcome",
+                label_map=outcome_label_map,
+                annotate_top_n=10,
+                point_size=45,
+                effect_col=effect_col,
+                effect_label=effect_label,
+            )
+            ensure_output_directory(output_dir)
+            overlay_png = (
+                output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
+            )
+            fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
+            print(f"Saved overlay plot to: {overlay_png}")
+            plt.close(fig_overlay)
+        except ValueError as err:
+            print(f"Skipping TMLE vs IPW overlay plot: {err}")
+
+        # Create overlay plot (Plotly)
+        print("\nCreating TMLE vs IPW overlay plot (interactive)...")
+        try:
+            plotly_overlay = build_plotly_overlay_methods(
+                df_volcano_enriched,
+                methods=("TMLE", "IPW"),
+                method_col="method",
+                outcome_col="outcome",
+                label_map=outcome_label_map,
+                marker_size=9,
+                effect_col=effect_col,
+                effect_label=effect_label,
+                null_value=null_value,
+                xscale=xscale,
+            )
+            overlay_html = (
+                output_dir
+                / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
+            )
+            save_plotly_figure(
+                plotly_overlay,
+                html_path=overlay_html,
+                png_path=None,
+            )
+            print(f"Saved interactive overlay to: {overlay_html}")
+        except ValueError as err:
+            print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+
+        # Create IPW vs TMLE correlation plot for the chosen effect
+        print("\nCreating IPW vs TMLE correlation plot...")
+        try:
+            # For log-RR, display correlation on log10 scale (linear axes), for clarity
+            corr_transform = "log10" if xscale in {"log"} else None
+            fig_corr, ax_corr = plot_method_correlation(
+                df_volcano_enriched,
+                methods=("IPW", "TMLE"),
+                method_col="method",
+                outcome_col="outcome",
+                effect_col=effect_col,
+                effect_label=effect_label,
+                xscale="linear",
+                transform=corr_transform,
+                clip_quantiles=(0.005, 0.995),
+                hexbin=False,
+                point_size=22,
+                alpha=0.65,
+                significance_col="q_value",
+                alpha_threshold=DEFAULT_ALPHA,
+            )
+            corr_png = output_dir / f"correlation_{output_suffix}.png"
+            fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
+            print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
+            plt.close(fig_corr)
+        except ValueError as err:
+            print(f"Skipping correlation plot: {err}")
+
+    # Create main volcano plot (Matplotlib) - always created
     print("\nCreating volcano plot...")
     fig, axes = volcano_plot_per_method(
         df_volcano_enriched,
@@ -488,26 +514,29 @@ def main() -> None:
         xscale=xscale,
     )
 
+    ensure_output_directory(output_dir)
     output_path_png = output_dir / f"volcano_plot_{output_suffix}.png"
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
     print(f"Saved plot to: {output_path_png}")
+    plt.close(fig)
 
-    # Create interactive plot (Plotly)
-    print("\nCreating interactive Plotly volcano plot...")
-    plotly_fig = build_plotly_volcano(
-        df_volcano_enriched,
-        alpha=DEFAULT_ALPHA,
-        method_col="method",
-        outcome_col="outcome",
-        effect_col=effect_col,
-        effect_label=effect_label,
-        null_value=null_value,
-        xscale=xscale,
-    )
+    # Create interactive plot (Plotly) - skip in fast mode
+    if not args.fast:
+        print("\nCreating interactive Plotly volcano plot...")
+        plotly_fig = build_plotly_volcano(
+            df_volcano_enriched,
+            alpha=DEFAULT_ALPHA,
+            method_col="method",
+            outcome_col="outcome",
+            effect_col=effect_col,
+            effect_label=effect_label,
+            null_value=null_value,
+            xscale=xscale,
+        )
 
-    plotly_html = output_dir / f"volcano_plot_{output_suffix}_interactive.html"
-    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
-    print(f"Saved interactive plot to: {plotly_html}")
+        plotly_html = output_dir / f"volcano_plot_{output_suffix}_interactive.html"
+        save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
+        print(f"Saved interactive plot to: {plotly_html}")
 
     print("\nDone!")
 
