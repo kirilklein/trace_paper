@@ -140,6 +140,18 @@ def main() -> None:
         default=False,
         help="Fast mode: only produce the main volcano plot PNG, skip all other outputs",
     )
+    parser.add_argument(
+        "--verbose",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Verbose output",
+    )
+    parser.add_argument(
+        "--fast",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fast mode: only produce the main volcano plot PNG, skip all other outputs",
+    )
 
     args = parser.parse_args()
 
