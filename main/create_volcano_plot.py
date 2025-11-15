@@ -129,22 +129,16 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "--arm-pooling-rho",
-        type=float,
-        default=None,
-        help=(
-            "Correlation parameter rho for 'correlation_adjusted' arm pooling. "
-            "If omitted, a default internal value is used."
-        ),
+        "--verbose",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Verbose output",
     )
     parser.add_argument(
-        "--arm-weight-col",
-        type=str,
-        default=None,
-        help=(
-            "Optional column name for run weights/sizes used by "
-            "'correlation_adjusted' arm pooling. Defaults to equal weights."
-        ),
+        "--fast",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fast mode: only produce the main volcano plot PNG, skip all other outputs",
     )
     parser.add_argument(
         "--verbose",
@@ -230,8 +224,6 @@ def main() -> None:
             df_with_arms,
             group_cols=None,
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         # Derive per-run RR from arm probabilities
@@ -244,8 +236,6 @@ def main() -> None:
             df_with_arms,
             group_cols=("method", "outcome"),
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
@@ -268,8 +258,6 @@ def main() -> None:
             df_with_arms,
             group_cols=None,
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
 
@@ -278,8 +266,6 @@ def main() -> None:
             df_with_arms,
             group_cols=("method", "outcome"),
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         print(f"Computed {len(df_pooled)} method-outcome combinations")

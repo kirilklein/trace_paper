@@ -45,19 +45,24 @@ print(f"  Outcomes: {df_test['outcome'].nunique()}")
 print(f"  Runs per method-outcome: {n_runs}")
 print()
 
-# Test all three pooling methods
-methods_to_test = ["inverse_variance_arms", "rubins_rules", "random_effects_dl"]
+# Test all arm pooling methods
+methods_to_test = [
+    "random_effects_hksj",
+    "rubins_rules",
+    "inter_intra_variance",
+    "simple_mean",
+]
 
 for pooling_method in methods_to_test:
     print("=" * 70)
-    print(f"Testing pooling method: {pooling_method}")
+    print(f"Testing arm pooling method: {pooling_method}")
     print("=" * 70)
 
     try:
         result = compute_rd_pvalues(
             df_test,
             group_cols=["method", "outcome"],
-            pooling_method=pooling_method,
+            arm_pooling=pooling_method,
             verbose=False,
         )
 
