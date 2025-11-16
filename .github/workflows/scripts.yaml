@@ -1,0 +1,161 @@
+name: 'Test scripts'
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Test compute_pooled_pvalues.py
+        run: |
+          echo "Testing compute_pooled_pvalues.py..."
+          python -m main.compute_pooled_pvalues \
+            --input-dir data/example \
+            --output-dir figures \
+            --effect-type RD \
+            --adjust bh \
+            --arm-pooling simple_mean
+
+      - name: Validate compute_pooled_pvalues outputs
+        run: |
+          echo "Validating compute_pooled_pvalues.py outputs..."
+          
+          # Check CSV file exists
+          OUTPUT_CSV="figures/example/bh/simple_mean/pooled_results_rd.csv"
+          if [ ! -f "$OUTPUT_CSV" ]; then
+            echo "ERROR: Expected output file not found: $OUTPUT_CSV"
+            exit 1
+          fi
+          echo "✓ Output CSV exists: $OUTPUT_CSV"
+          
+          # Check file size > 1KB
+          SIZE=$(stat -c%s "$OUTPUT_CSV" 2>/dev/null || stat -f%z "$OUTPUT_CSV" 2>/dev/null)
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "ERROR: Output CSV is too small: $SIZE bytes"
+            exit 1
+          fi
+          echo "✓ Output CSV has valid size: $SIZE bytes"
+          
+          # Validate CSV columns using Python
+          python -c "
+          import pandas as pd
+          import sys
+          
+          required_cols = {'method', 'outcome', 'RD', 'p_value', 'q_value', 'neglog10p'}
+          df = pd.read_csv('$OUTPUT_CSV')
+          
+          if not required_cols.issubset(df.columns):
+            missing = required_cols - set(df.columns)
+            print(f'ERROR: Missing columns: {missing}')
+            sys.exit(1)
+          
+          print(f'✓ CSV has all required columns: {required_cols}')
+          print(f'✓ CSV has {len(df)} rows')
+          "
+
+      - name: Test create_volcano_plot.py
+        run: |
+          echo "Testing create_volcano_plot.py..."
+          python -m main.create_volcano_plot \
+            --input-dir data/example \
+            --output-dir figures \
+            --effect-type RD \
+            --no-diagnostics
+
+      - name: Validate create_volcano_plot outputs
+        run: |
+          echo "Validating create_volcano_plot.py outputs..."
+          
+          # Define expected output files
+          OUTPUT_DIR="figures/example/bh/simple_mean"
+          PNG_FILES=(
+            "$OUTPUT_DIR/volcano_plot_rd.png"
+            "$OUTPUT_DIR/confusion_matrix_rd.png"
+          )
+          HTML_FILES=(
+            "$OUTPUT_DIR/volcano_plot_rd_interactive.html"
+          )
+          
+          # Check PNG files
+          for FILE in "${PNG_FILES[@]}"; do
+            if [ ! -f "$FILE" ]; then
+              echo "ERROR: Expected PNG file not found: $FILE"
+              exit 1
+            fi
+            SIZE=$(stat -c%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null)
+            if [ "$SIZE" -lt 1024 ]; then
+              echo "ERROR: PNG file is too small: $FILE ($SIZE bytes)"
+              exit 1
+            fi
+            echo "✓ PNG file exists and valid: $FILE ($SIZE bytes)"
+          done
+          
+          # Check HTML files
+          for FILE in "${HTML_FILES[@]}"; do
+            if [ ! -f "$FILE" ]; then
+              echo "ERROR: Expected HTML file not found: $FILE"
+              exit 1
+            fi
+            SIZE=$(stat -c%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null)
+            if [ "$SIZE" -lt 1024 ]; then
+              echo "ERROR: HTML file is too small: $FILE ($SIZE bytes)"
+              exit 1
+            fi
+            echo "✓ HTML file exists and valid: $FILE ($SIZE bytes)"
+          done
+
+      - name: Test create_manhattan_plot.py
+        run: |
+          echo "Testing create_manhattan_plot.py..."
+          python -m main.create_manhattan_plot \
+            --input-dir example_data \
+            --output-dir figures \
+            --method IPW \
+            --adjust bh \
+            --arm-pooling simple_mean
+
+      - name: Validate create_manhattan_plot outputs
+        run: |
+          echo "Validating create_manhattan_plot.py outputs..."
+          
+          OUTPUT_PNG="figures/example/bh/simple_mean/manhattan_prevalence_log_rr_IPW.png"
+          
+          # Check PNG file exists
+          if [ ! -f "$OUTPUT_PNG" ]; then
+            echo "ERROR: Expected PNG file not found: $OUTPUT_PNG"
+            exit 1
+          fi
+          echo "✓ PNG file exists: $OUTPUT_PNG"
+          
+          # Check file size > 1KB
+          SIZE=$(stat -c%s "$OUTPUT_PNG" 2>/dev/null || stat -f%z "$OUTPUT_PNG" 2>/dev/null)
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "ERROR: PNG file is too small: $SIZE bytes"
+            exit 1
+          fi
+          echo "✓ PNG file has valid size: $SIZE bytes"
+
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "All script tests passed successfully! ✓"
+          echo "=========================================="
