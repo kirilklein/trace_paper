@@ -36,7 +36,7 @@ from trace.plotting.volcano import (
     volcano_overlay_methods,
     volcano_plot_per_method,
 )
-from trace.plotting.volcano_plotly import (
+from trace.plotting.volcano_plotly_filter import (
     build_plotly_overlay_methods,
     build_plotly_volcano,
     save_plotly_figure,
@@ -57,19 +57,19 @@ def main() -> None:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("data/semaglutide"),
+        default=Path("data/cvd"),
         help="Directory containing input data files",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("figures"),
+        default=Path("figures/cvd_RR"),
         help="Directory for output figures",
     )
     parser.add_argument(
         "--effect-type",
         choices=["RD", "RR", "log-RR"],
-        default="RD",
+        default="RR",
         help="Effect measure: Risk Difference (RD), Risk Ratio (RR), or log Risk Ratio",
     )
     parser.add_argument(
@@ -79,84 +79,10 @@ def main() -> None:
         help="Run diagnostic analyses",
     )
     parser.add_argument(
-        "--adjust",
-        choices=[
-            "bh",
-            "by",
-            "tsbh",
-            "tsbky",
-            "bonferroni",
-            "sidak",
-            "holm",
-            "holm-sidak",
-            "hochberg",
-            "hommel",
-            "none",
-        ],
-        default="bh",
-        help="Multiple testing adjustment method",
-    )
-    parser.add_argument(
-        "--adjust-per",
-        dest="adjust_per",
-        choices=["by_method", "global"],
-        default="by_method",
-        help="Scope of multiple testing adjustment",
-    )
-    parser.add_argument(
-        "--min-prevalence",
-        type=float,
-        default=0.0,
-        help="Minimum prevalence threshold (as proportion 0-1). Filters outcomes with prevalence_mean_total < threshold. Default: 0.0 (no filtering)",
-    )
-
-    parser.add_argument(
-        "--arm-pooling",
-        choices=[
-            "random_effects_hksj",
-            "correlation_adjusted",
-            "simple_mean",
-            "rubins_rules",
-            "inter_intra_variance",
-        ],
-        default="simple_mean",
-        help=(
-            "Arm-level pooling on the logit scale across runs: "
-            "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE) or "
-            "'correlation_adjusted' (uses weights and rho) or "
-            "'simple_mean' (unweighted mean of logits; SEM uses sample std with ddof=1)"
-        ),
-    )
-
-    parser.add_argument(
-        "--arm-pooling-rho",
-        type=float,
-        default=None,
-        help=(
-            "Correlation parameter rho for 'correlation_adjusted' arm pooling. "
-            "If omitted, a default internal value is used."
-        ),
-    )
-    parser.add_argument(
-        "--arm-weight-col",
+        "--title",
         type=str,
-        default=None,
-        help=(
-            "Optional column name for run weights/sizes used by "
-            "'correlation_adjusted' arm pooling. Defaults to equal weights."
-        ),
-    )
-    parser.add_argument(
-        "--verbose",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Verbose output",
-    )
-    parser.add_argument(
-        "--fast",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Fast mode: only produce the main volcano plot PNG, skip all other outputs",
+        default="CVD",
+        help="Title to display above the plots",
     )
 
     args = parser.parse_args()
@@ -382,36 +308,46 @@ def main() -> None:
             methods=("TMLE", "IPW"),
             method_col="method",
             outcome_col="outcome",
-            q_col="q_value",
-            alpha=DEFAULT_ALPHA,
-            return_confusion=True,
+            label_map=outcome_label_map,
+            annotate_top_n=10,
+            point_size=45,
+            effect_col=effect_col,
+            effect_label=effect_label,
+            title=args.title,
         )
+        overlay_png = (
+            args.output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
+        )
+        fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
+        print(f"Saved overlay plot to: {overlay_png}")
+        plt.close(fig_overlay)
+    except ValueError as err:
+        print(f"Skipping TMLE vs IPW overlay plot: {err}")
 
-        # Save confusion matrix as heatmap
-        if confusion_result:
-            confusion_df, agreement, n_overlap = confusion_result
-
-            fig_cm = plot_confusion_matrix(
-                confusion_df,
-                agreement,
-                n_overlap,
-                method_a="TMLE",
-                method_b="IPW",
-            )
-
-            ensure_output_directory(output_dir)
-            confusion_png = output_dir / f"confusion_matrix_{output_suffix}.png"
-            fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
-            print(f"Saved confusion matrix to: {confusion_png}")
-            plt.close(fig_cm)
-
-    # Skip overlay and correlation plots in fast mode
-    if not args.fast:
-        outcome_label_map = (
-            df_volcano_enriched.dropna(subset=["outcome_label"])
-            .drop_duplicates("outcome")
-            .set_index("outcome")["outcome_label"]
-            .to_dict()
+    # Create overlay plot (Plotly)
+    print("\nCreating TMLE vs IPW overlay plot (interactive)...")
+    try:
+        plotly_overlay = build_plotly_overlay_methods(
+            df_volcano_enriched,
+            methods=("TMLE", "IPW"),
+            method_col="method",
+            outcome_col="outcome",
+            label_map=outcome_label_map,
+            marker_size=9,
+            effect_col=effect_col,
+            effect_label=effect_label,
+            null_value=null_value,
+            xscale=xscale,
+            title=args.title,
+        )
+        overlay_html = (
+            args.output_dir
+            / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
+        )
+        save_plotly_figure(
+            plotly_overlay,
+            html_path=overlay_html,
+            png_path=None,
         )
 
         # Create overlay plot (Matplotlib)
@@ -510,6 +446,7 @@ def main() -> None:
         effect_label=effect_label,
         null_value=null_value,
         xscale=xscale,
+        title=args.title,
     )
 
     ensure_output_directory(output_dir)
@@ -518,19 +455,19 @@ def main() -> None:
     print(f"Saved plot to: {output_path_png}")
     plt.close(fig)
 
-    # Create interactive plot (Plotly) - skip in fast mode
-    if not args.fast:
-        print("\nCreating interactive Plotly volcano plot...")
-        plotly_fig = build_plotly_volcano(
-            df_volcano_enriched,
-            alpha=DEFAULT_ALPHA,
-            method_col="method",
-            outcome_col="outcome",
-            effect_col=effect_col,
-            effect_label=effect_label,
-            null_value=null_value,
-            xscale=xscale,
-        )
+    # Create interactive plot (Plotly)
+    print("\nCreating interactive Plotly volcano plot...")
+    plotly_fig = build_plotly_volcano(
+        df_volcano_enriched,
+        alpha=DEFAULT_ALPHA,
+        method_col="method",
+        outcome_col="outcome",
+        effect_col=effect_col,
+        effect_label=effect_label,
+        null_value=null_value,
+        xscale=xscale,
+        title=args.title,
+    )
 
         plotly_html = output_dir / f"volcano_plot_{output_suffix}_interactive.html"
         save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
