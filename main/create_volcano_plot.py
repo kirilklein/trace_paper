@@ -41,11 +41,8 @@ from trace.plotting.volcano_plotly_filter import (
     build_plotly_volcano,
     save_plotly_figure,
 )
-from trace.statistics import (
-    combine_rr_random_effects_HKSJ,
-    compute_rd_pvalues,
-    compute_rr_from_arm_estimates,
-)
+from trace.statistics import compute_rd_pvalues
+from trace.plotting.correlation import plot_method_correlation
 
 
 # -----------------------------------------------------------------------------
@@ -90,6 +87,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Construct output directory
+    input_folder_name = args.input_dir.name
+    output_dir = args.output_dir / input_folder_name / args.adjust / args.arm_pooling
+
     # Construct file paths
     estimates_path = args.input_dir / "combined_estimates.txt"
     stats_path = args.input_dir / "combined_stats.txt"
@@ -120,9 +121,11 @@ def main() -> None:
 
     print(f"Effect type: {effect_type}")
     print(f"Input directory: {args.input_dir}")
-    print(f"Output directory: {args.output_dir}")
+    print(f"Output directory: {output_dir}")
     diagnostics_status = "enabled" if args.diagnostics else "disabled"
     print(f"Diagnostics: {diagnostics_status}")
+    if args.fast:
+        print("Fast mode: enabled (skipping extra plots)")
     print()
 
     # Load data
@@ -144,15 +147,37 @@ def main() -> None:
 
     # Compute effects based on type
     if effect_type in ["RR", "log-RR"]:
-        print("\nComputing per-run risk ratios...")
-        df_per_run = compute_rr_from_arm_estimates(
-            df_with_arms, group_cols=None, verbose=False
+        # Synchronize inference with RD: use pooled logit-difference p-values
+        # and derive RR for the effect axis.
+        print(
+            "\nComputing per-run RD pipeline outputs (for metadata and per-run RR)..."
         )
+        df_per_run = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=None,
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
+            verbose=False,
+        )
+        # Derive per-run RR from arm probabilities
+        if not df_per_run.empty:
+            df_per_run = df_per_run.copy()
+            df_per_run["RR"] = df_per_run["p1_hat"] / df_per_run["p0_hat"]
 
-        print("Pooling risk ratios with DL + HKSJ adjustment...")
-        df_pooled = combine_rr_random_effects_HKSJ(
-            df_per_run, group_cols=("method", "outcome")
+        print("Pooling arm logits and computing shared logit-difference p-values...")
+        df_pooled = compute_rd_pvalues(
+            df_with_arms,
+            group_cols=("method", "outcome"),
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
+            verbose=False,
         )
+        # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
+        if not df_pooled.empty:
+            df_pooled = df_pooled.copy()
+            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
         if df_pooled.empty:
@@ -168,15 +193,19 @@ def main() -> None:
         df_per_run = compute_rd_pvalues(
             df_with_arms,
             group_cols=None,
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
 
-        print("Pooling risk differences using inverse variance on arms...")
+        print("Pooling across runs using arm-level pooling on the logit scale...")
         df_pooled = compute_rd_pvalues(
             df_with_arms,
             group_cols=("method", "outcome"),
-            pooling_method="inverse_variance_arms",
+            arm_pooling=args.arm_pooling,
+            arm_pooling_rho=args.arm_pooling_rho,
+            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         print(f"Computed {len(df_pooled)} method-outcome combinations")
@@ -200,9 +229,14 @@ def main() -> None:
                     f"{n_heterogeneous}"
                 )
 
-    # Run diagnostics if requested
-    if args.diagnostics:
-        run_diagnostics(df_pooled, df_with_arms, effect_type=effect_type)
+    # Run diagnostics if requested (skip in fast mode)
+    if args.diagnostics and not args.fast:
+        run_diagnostics(
+            df_pooled,
+            df_with_arms,
+            effect_type=effect_type,
+            out_dir=str(output_dir),
+        )
 
     # Prepare volcano plot data
     print("\nPreparing volcano plot data...")
@@ -212,8 +246,8 @@ def main() -> None:
         p_col="p_value",
         method_col="method",
         outcome_col="outcome",
-        adjust="bh",
-        adjust_per="by_method",
+        adjust=args.adjust,
+        adjust_per=args.adjust_per,
         effect_alias=effect_alias,
     )
 
@@ -238,6 +272,25 @@ def main() -> None:
         effect_col=effect_col,
     )
 
+    # Filter by minimum prevalence if specified
+    if args.min_prevalence > 0.0:
+        n_before = len(df_volcano_enriched)
+        df_volcano_enriched = df_volcano_enriched[
+            df_volcano_enriched["prevalence_mean_total"] >= args.min_prevalence
+        ].copy()
+        n_after = len(df_volcano_enriched)
+        n_filtered = n_before - n_after
+        print(
+            f"\nFiltered {n_filtered} outcomes with prevalence < {args.min_prevalence:.4f}"
+        )
+        print(f"Remaining: {n_after} outcomes")
+
+    # Save enriched dataframe with all computed statistics
+    ensure_output_directory(output_dir)
+    enriched_output_path = output_dir / f"combined_results_{output_suffix}.csv"
+    df_volcano_enriched.to_csv(enriched_output_path, index=False)
+    print(f"\nSaved combined results to: {enriched_output_path}")
+
     # Summary statistics
     print("\nSummary statistics:")
     for method in df_volcano_enriched["method"].unique():
@@ -247,48 +300,10 @@ def main() -> None:
             f"  {method}: {len(d)} outcomes, {n_sig} significant (q < {DEFAULT_ALPHA})"
         )
 
-    # Confusion matrix
-    print("\nTMLE vs IPW significance confusion matrix:")
-    confusion_result = print_significance_confusion_matrix(
-        df_volcano_enriched,
-        methods=("TMLE", "IPW"),
-        method_col="method",
-        outcome_col="outcome",
-        q_col="q_value",
-        alpha=DEFAULT_ALPHA,
-        return_confusion=True,
-    )
-
-    ensure_output_directory(args.output_dir)
-
-    # Save confusion matrix as heatmap
-    if confusion_result:
-        confusion_df, agreement, n_overlap = confusion_result
-
-        fig_cm = plot_confusion_matrix(
-            confusion_df,
-            agreement,
-            n_overlap,
-            method_a="TMLE",
-            method_b="IPW",
-        )
-
-        confusion_png = args.output_dir / f"confusion_matrix_{output_suffix}.png"
-        fig_cm.savefig(confusion_png, dpi=300, bbox_inches="tight")
-        print(f"Saved confusion matrix to: {confusion_png}")
-        plt.close(fig_cm)
-
-    outcome_label_map = (
-        df_volcano_enriched.dropna(subset=["outcome_label"])
-        .drop_duplicates("outcome")
-        .set_index("outcome")["outcome_label"]
-        .to_dict()
-    )
-
-    # Create overlay plot (Matplotlib)
-    print("\nCreating TMLE vs IPW overlay plot...")
-    try:
-        fig_overlay, _ = volcano_overlay_methods(
+    # Confusion matrix (skip in fast mode)
+    if not args.fast:
+        print("\nTMLE vs IPW significance confusion matrix:")
+        confusion_result = print_significance_confusion_matrix(
             df_volcano_enriched,
             methods=("TMLE", "IPW"),
             method_col="method",
@@ -334,11 +349,88 @@ def main() -> None:
             html_path=overlay_html,
             png_path=None,
         )
-        print(f"Saved interactive overlay to: {overlay_html}")
-    except ValueError as err:
-        print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
 
-    # Create main volcano plot (Matplotlib)
+        # Create overlay plot (Matplotlib)
+        print("\nCreating TMLE vs IPW overlay plot...")
+        try:
+            fig_overlay, _ = volcano_overlay_methods(
+                df_volcano_enriched,
+                methods=("TMLE", "IPW"),
+                method_col="method",
+                outcome_col="outcome",
+                label_map=outcome_label_map,
+                annotate_top_n=10,
+                point_size=45,
+                effect_col=effect_col,
+                effect_label=effect_label,
+            )
+            ensure_output_directory(output_dir)
+            overlay_png = (
+                output_dir / f"volcano_plot_tmle_ipw_overlay_{output_suffix}.png"
+            )
+            fig_overlay.savefig(overlay_png, dpi=300, bbox_inches="tight")
+            print(f"Saved overlay plot to: {overlay_png}")
+            plt.close(fig_overlay)
+        except ValueError as err:
+            print(f"Skipping TMLE vs IPW overlay plot: {err}")
+
+        # Create overlay plot (Plotly)
+        print("\nCreating TMLE vs IPW overlay plot (interactive)...")
+        try:
+            plotly_overlay = build_plotly_overlay_methods(
+                df_volcano_enriched,
+                methods=("TMLE", "IPW"),
+                method_col="method",
+                outcome_col="outcome",
+                label_map=outcome_label_map,
+                marker_size=9,
+                effect_col=effect_col,
+                effect_label=effect_label,
+                null_value=null_value,
+                xscale=xscale,
+            )
+            overlay_html = (
+                output_dir
+                / f"volcano_plot_tmle_ipw_overlay_{output_suffix}_interactive.html"
+            )
+            save_plotly_figure(
+                plotly_overlay,
+                html_path=overlay_html,
+                png_path=None,
+            )
+            print(f"Saved interactive overlay to: {overlay_html}")
+        except ValueError as err:
+            print(f"Skipping Plotly TMLE vs IPW overlay: {err}")
+
+        # Create IPW vs TMLE correlation plot for the chosen effect
+        print("\nCreating IPW vs TMLE correlation plot...")
+        try:
+            # For log-RR, display correlation on log10 scale (linear axes), for clarity
+            corr_transform = "log10" if xscale in {"log"} else None
+            fig_corr, ax_corr = plot_method_correlation(
+                df_volcano_enriched,
+                methods=("IPW", "TMLE"),
+                method_col="method",
+                outcome_col="outcome",
+                effect_col=effect_col,
+                effect_label=effect_label,
+                xscale="linear",
+                transform=corr_transform,
+                clip_quantiles=(0.005, 0.995),
+                hexbin=False,
+                point_size=22,
+                alpha=0.65,
+                significance_col="q_value",
+                alpha_threshold=DEFAULT_ALPHA,
+            )
+            corr_png = output_dir / f"correlation_{output_suffix}.png"
+            fig_corr.savefig(corr_png, dpi=300, bbox_inches="tight")
+            print(f"Saved IPW vs TMLE correlation plot to: {corr_png}")
+            plt.close(fig_corr)
+        except ValueError as err:
+            print(f"Skipping correlation plot: {err}")
+
+    # Create main volcano plot (Matplotlib) - always created
     print("\nCreating volcano plot...")
     fig, axes = volcano_plot_per_method(
         df_volcano_enriched,
@@ -357,9 +449,11 @@ def main() -> None:
         title=args.title,
     )
 
-    output_path_png = args.output_dir / f"volcano_plot_{output_suffix}.png"
+    ensure_output_directory(output_dir)
+    output_path_png = output_dir / f"volcano_plot_{output_suffix}.png"
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
     print(f"Saved plot to: {output_path_png}")
+    plt.close(fig)
 
     # Create interactive plot (Plotly)
     print("\nCreating interactive Plotly volcano plot...")
@@ -375,9 +469,9 @@ def main() -> None:
         title=args.title,
     )
 
-    plotly_html = args.output_dir / f"volcano_plot_{output_suffix}_interactive.html"
-    save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
-    print(f"Saved interactive plot to: {plotly_html}")
+        plotly_html = output_dir / f"volcano_plot_{output_suffix}_interactive.html"
+        save_plotly_figure(plotly_fig, html_path=plotly_html, png_path=None)
+        print(f"Saved interactive plot to: {plotly_html}")
 
     print("\nDone!")
 
