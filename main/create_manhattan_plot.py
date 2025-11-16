@@ -116,6 +116,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Verbose output",
     )
+    parser.add_argument(
+        "--annotate-top",
+        type=int,
+        default=5,
+        help="Number of top significant codes to annotate per ATC group panel (0 to disable)",
+    )
     return parser
 
 
@@ -139,6 +145,7 @@ def main() -> None:
     print(f"Output directory: {output_dir}")
     print(f"Adjustment: {args.adjust} (scope={args.adjust_per})")
     print(f"Arm pooling: {args.arm_pooling}")
+    print(f"Annotate top: {args.annotate_top} codes per panel")
     if args.fast:
         print("Fast mode: enabled (currently identical to default mode)")
     print()
@@ -361,6 +368,28 @@ def main() -> None:
         ax.grid(axis="x", linestyle="--", alpha=0.6)
         ax.set_xscale("log")
         ax.set_xlim(0.0001, 1.0)
+
+        # Annotate top N significant codes per panel
+        if args.annotate_top > 0 and len(d) > 0:
+            # Sort by q-value (most significant first) and take top N
+            d_sorted = d.sort_values("q_value").head(args.annotate_top)
+            for idx, row in d_sorted.iterrows():
+                # Simple offset to reduce overlap
+                offset_x = 1.2  # Slight offset in log space
+                offset_y = 0.1 if row["log_RR"] > 0 else -0.1
+                ax.annotate(
+                    row["outcome"],
+                    xy=(row["prevalence"], row["log_RR"]),
+                    xytext=(row["prevalence"] * offset_x, row["log_RR"] + offset_y),
+                    fontsize=7,
+                    alpha=0.8,
+                    arrowprops=dict(
+                        arrowstyle="->",
+                        connectionstyle="arc3,rad=0.2",
+                        alpha=0.5,
+                        lw=0.5,
+                    ),
+                )
 
     # Hide unused axes (if any)
     axs_list = list(axs_flat)
