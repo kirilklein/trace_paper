@@ -168,28 +168,25 @@ def _extract_code_prefixes(
     codes: pd.Series, max_length: int = 4
 ) -> tuple[pd.Series, list[str]]:
     """Extract ATC code prefixes and return unique prefixes for filtering.
-    
+
     Returns:
         Series with code prefixes, and list of unique prefixes sorted by length.
     """
     # Extract prefixes of different lengths
     prefixes = []
     unique_prefixes = set()
-    
+
     for length in range(1, max_length + 1):
         prefix_series = codes.astype(str).str[:length]
         prefixes.append(prefix_series)
         unique_prefixes.update(prefix_series.dropna().unique())
-    
+
     # Use 2-character prefix by default (most common filtering level)
     code_prefixes = codes.astype(str).str[:2]
-    
+
     # Sort unique prefixes: "All" first, then by length, then alphabetically
-    sorted_prefixes = ["All"] + sorted(
-        unique_prefixes,
-        key=lambda x: (len(x), x)
-    )
-    
+    sorted_prefixes = ["All"] + sorted(unique_prefixes, key=lambda x: (len(x), x))
+
     return code_prefixes, sorted_prefixes
 
 
@@ -229,7 +226,7 @@ def build_plotly_volcano(
         effect_col=effect_col,
         effect_label=effect_label,
     )
-    
+
     # Extract code prefixes for filtering
     # Use 5-character prefixes for full ATC code granularity (A01AA, A02AA, N03AG, etc.)
     # Format: letter, number, number, letter, letter (e.g., "A01AA", "N03AG")
@@ -267,12 +264,10 @@ def build_plotly_volcano(
 
             # Create traces grouped by code prefix for filtering
             for prefix in unique_prefixes[1:]:  # Skip "All"
-                prefix_subset = method_subset[
-                    method_subset["code_prefix"] == prefix
-                ]
+                prefix_subset = method_subset[method_subset["code_prefix"] == prefix]
                 if prefix_subset.empty:
                     continue
-                
+
                 # Capture trace index before adding
                 trace_idx_before = len(fig.data)
                 fig.add_trace(
@@ -295,14 +290,18 @@ def build_plotly_volcano(
                 trace_idx_after = len(fig.data) - 1
                 # Verify the index is correct
                 if trace_idx_after != trace_idx_before:
-                    print(f"WARNING: Trace index mismatch - expected {trace_idx_before}, got {trace_idx_after}")
-                
+                    print(
+                        f"WARNING: Trace index mismatch - expected {trace_idx_before}, got {trace_idx_after}"
+                    )
+
                 # Store both the prefix and the actual outcome codes for this trace
                 # Convert to strings to ensure proper matching
                 outcome_codes = prefix_subset[outcome_col].astype(str).unique().tolist()
                 # Also store method and significance for debugging
-                trace_info.append((trace_idx_after, prefix, outcome_codes, method, significance_label))
-    
+                trace_info.append(
+                    (trace_idx_after, prefix, outcome_codes, method, significance_label)
+                )
+
     # Count scatter traces (before hlines/vlines are added)
     n_scatter_traces = len(fig.data)
 
@@ -335,18 +334,18 @@ def build_plotly_volcano(
         trace_info_map = {}
         for idx, prefix, codes, method, significance in trace_info:
             trace_info_map[str(idx)] = {
-                'prefix': prefix,
-                'codes': codes,
-                'method': method,
-                'significance': significance
+                "prefix": prefix,
+                "codes": codes,
+                "method": method,
+                "significance": significance,
             }
         # Store in figure's customdata or as a hidden annotation
         # We'll extract this in save_plotly_figure and inject JavaScript
-        if not hasattr(fig, '_trace_filter_info'):
+        if not hasattr(fig, "_trace_filter_info"):
             fig._trace_filter_info = {}
-        fig._trace_filter_info['trace_info_map'] = trace_info_map
-        fig._trace_filter_info['n_scatter_traces'] = n_scatter_traces
-        fig._trace_filter_info['n_total_traces'] = len(fig.data)
+        fig._trace_filter_info["trace_info_map"] = trace_info_map
+        fig._trace_filter_info["n_scatter_traces"] = n_scatter_traces
+        fig._trace_filter_info["n_total_traces"] = len(fig.data)
 
     layout_dict = {
         "legend_title_text": "",
@@ -363,7 +362,7 @@ def build_plotly_volcano(
         }
         # Increase top margin to accommodate title
         layout_dict["margin"]["t"] = 100
-    
+
     fig.update_layout(**layout_dict)
 
     return fig
@@ -409,7 +408,7 @@ def build_plotly_overlay_methods(
         effect_col=effect_col,
         effect_label=effect_label,
     )
-    
+
     # Extract code prefixes for filtering
     # Use 5-character prefixes for full ATC code granularity (A01AA, A02AA, N03AG, etc.)
     # Format: letter, number, number, letter, letter (e.g., "A01AA", "N03AG")
@@ -427,7 +426,7 @@ def build_plotly_overlay_methods(
         raise ValueError("No outcomes contain both methods; overlay not created.")
 
     fig = go.Figure()
-    
+
     # Store trace info for filtering: (trace_idx, code_prefix, trace_type)
     # trace_type: 'line', 'method_0', 'method_1'
     trace_info = []
@@ -437,7 +436,7 @@ def build_plotly_overlay_methods(
         prefix_paired = paired[paired["code_prefix"] == prefix]
         if prefix_paired.empty:
             continue
-        
+
         line_x: list[float | None] = []
         line_y: list[float | None] = []
         for _, group in prefix_paired.groupby(outcome_col):
@@ -458,7 +457,7 @@ def build_plotly_overlay_methods(
                     None,
                 ]
             )
-        
+
         if line_x and line_y:
             trace_idx_before = len(fig.data)
             fig.add_trace(
@@ -485,12 +484,10 @@ def build_plotly_overlay_methods(
             continue
 
         for prefix in unique_prefixes[1:]:  # Skip "All"
-            prefix_subset = method_subset[
-                method_subset["code_prefix"] == prefix
-            ]
+            prefix_subset = method_subset[method_subset["code_prefix"] == prefix]
             if prefix_subset.empty:
                 continue
-            
+
             trace_idx_before = len(fig.data)
             fig.add_trace(
                 go.Scatter(
@@ -499,7 +496,8 @@ def build_plotly_overlay_methods(
                     mode="markers",
                     marker=dict(size=marker_size),
                     name=method,
-                    showlegend=prefix == unique_prefixes[1],  # Show legend only for first prefix
+                    showlegend=prefix
+                    == unique_prefixes[1],  # Show legend only for first prefix
                     hovertext=prefix_subset["hover_text"],
                     hovertemplate="%{hovertext}<extra></extra>",
                     visible=True,
@@ -509,7 +507,9 @@ def build_plotly_overlay_methods(
             # Store both the prefix and the actual outcome codes for this trace
             # Convert to strings to ensure proper matching
             outcome_codes = prefix_subset[outcome_col].astype(str).unique().tolist()
-            trace_info.append((trace_idx_after, prefix, f"method_{method_idx}", outcome_codes, method))
+            trace_info.append(
+                (trace_idx_after, prefix, f"method_{method_idx}", outcome_codes, method)
+            )
 
     # Count scatter traces (before hlines/vlines)
     n_scatter_traces = len(fig.data)
@@ -528,7 +528,7 @@ def build_plotly_overlay_methods(
     if xscale == "log":
         fig.update_xaxes(type="log")
     fig.update_yaxes(title_text="-log10(p-value)")
-    
+
     # Store trace info for JavaScript filtering
     if len(unique_prefixes) > 1:
         # Store trace info mapping with outcome codes
@@ -537,25 +537,27 @@ def build_plotly_overlay_methods(
             if len(item) == 4:  # Line trace: (idx, prefix, "line", codes)
                 idx, prefix, trace_type, codes = item
                 trace_info_map[str(idx)] = {
-                    'prefix': prefix,
-                    'type': trace_type,
-                    'codes': codes,
-                    'method': None
+                    "prefix": prefix,
+                    "type": trace_type,
+                    "codes": codes,
+                    "method": None,
                 }
-            elif len(item) == 5:  # Method trace: (idx, prefix, "method_X", codes, method)
+            elif (
+                len(item) == 5
+            ):  # Method trace: (idx, prefix, "method_X", codes, method)
                 idx, prefix, trace_type, codes, method = item
                 trace_info_map[str(idx)] = {
-                    'prefix': prefix,
-                    'type': trace_type,
-                    'codes': codes,
-                    'method': method
+                    "prefix": prefix,
+                    "type": trace_type,
+                    "codes": codes,
+                    "method": method,
                 }
-        if not hasattr(fig, '_trace_filter_info'):
+        if not hasattr(fig, "_trace_filter_info"):
             fig._trace_filter_info = {}
-        fig._trace_filter_info['trace_info_map'] = trace_info_map
-        fig._trace_filter_info['n_scatter_traces'] = n_scatter_traces
-        fig._trace_filter_info['n_total_traces'] = len(fig.data)
-    
+        fig._trace_filter_info["trace_info_map"] = trace_info_map
+        fig._trace_filter_info["n_scatter_traces"] = n_scatter_traces
+        fig._trace_filter_info["n_total_traces"] = len(fig.data)
+
     layout_dict = {
         "template": "plotly_white",
         "legend_title_text": "Method",
@@ -571,7 +573,7 @@ def build_plotly_overlay_methods(
         }
         # Increase top margin to accommodate title
         layout_dict["margin"]["t"] = 100
-    
+
     fig.update_layout(**layout_dict)
 
     return fig
@@ -590,33 +592,36 @@ def save_plotly_figure(
 
     html_path = Path(html_path)
     html_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Check if figure has trace filter info
-    has_filter = hasattr(fig, '_trace_filter_info') and fig._trace_filter_info
-    
+    has_filter = hasattr(fig, "_trace_filter_info") and fig._trace_filter_info
+
     if has_filter:
         # Write to temporary file first
-        temp_html = html_path.with_suffix('.tmp.html')
+        temp_html = html_path.with_suffix(".tmp.html")
         fig.write_html(str(temp_html), include_plotlyjs="cdn")
-        
+
         # Read the HTML and inject JavaScript for filtering
-        with open(temp_html, 'r', encoding='utf-8') as f:
+        with open(temp_html, "r", encoding="utf-8") as f:
             html_content = f.read()
-        
+
         # Extract trace filter info
-        trace_info_map = fig._trace_filter_info['trace_info_map']
-        n_scatter_traces = fig._trace_filter_info['n_scatter_traces']
-        n_total_traces = fig._trace_filter_info['n_total_traces']
-        
+        trace_info_map = fig._trace_filter_info["trace_info_map"]
+        n_scatter_traces = fig._trace_filter_info["n_scatter_traces"]
+        n_total_traces = fig._trace_filter_info["n_total_traces"]
+
         # Create JavaScript code for filtering
         # Convert trace info map to JavaScript object
         import json
+
         # Debug: print trace info to verify all traces are stored
         print(f"Stored trace info for {len(trace_info_map)} traces")
         for idx, info in sorted(trace_info_map.items(), key=lambda x: int(x[0]))[:5]:
-            print(f"  Trace {idx}: prefix={info['prefix']}, codes={info['codes'][:3]}...")
+            print(
+                f"  Trace {idx}: prefix={info['prefix']}, codes={info['codes'][:3]}..."
+            )
         trace_map_js = json.dumps(trace_info_map)
-        
+
         filter_script = f"""
         <style>
             #code-filter-container {{
@@ -1278,18 +1283,18 @@ def save_plotly_figure(
         }})();
         </script>
         """
-        
+
         # Inject the script before the closing body tag
-        if '</body>' in html_content:
-            html_content = html_content.replace('</body>', filter_script + '</body>')
+        if "</body>" in html_content:
+            html_content = html_content.replace("</body>", filter_script + "</body>")
         else:
             # If no body tag, append before closing html
-            html_content = html_content.replace('</html>', filter_script + '</html>')
-        
+            html_content = html_content.replace("</html>", filter_script + "</html>")
+
         # Write the modified HTML
-        with open(html_path, 'w', encoding='utf-8') as f:
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-        
+
         # Remove temporary file
         temp_html.unlink()
     else:
