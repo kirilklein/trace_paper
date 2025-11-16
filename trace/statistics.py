@@ -418,10 +418,7 @@ def _compute_delta_method_rd_ci(
 def compute_rd_pvalues(
     df: pd.DataFrame,
     group_cols: Optional[Union[str, List[str]]] = None,
-    pooling_method: str = "inverse_variance_arms",  # retained for legacy compat
     arm_pooling: Literal["fixed_effect", "random_effects_hksj"] = "random_effects_hksj",
-    arm_pooling_rho: Optional[float] = None,
-    arm_weight_col: Optional[str] = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """

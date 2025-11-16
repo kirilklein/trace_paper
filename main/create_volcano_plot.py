@@ -156,8 +156,6 @@ def main() -> None:
             df_with_arms,
             group_cols=None,
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         # Derive per-run RR from arm probabilities
@@ -170,8 +168,6 @@ def main() -> None:
             df_with_arms,
             group_cols=("method", "outcome"),
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
@@ -194,8 +190,6 @@ def main() -> None:
             df_with_arms,
             group_cols=None,
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
 
@@ -204,8 +198,6 @@ def main() -> None:
             df_with_arms,
             group_cols=("method", "outcome"),
             arm_pooling=args.arm_pooling,
-            arm_pooling_rho=args.arm_pooling_rho,
-            arm_weight_col=args.arm_weight_col,
             verbose=False,
         )
         print(f"Computed {len(df_pooled)} method-outcome combinations")
