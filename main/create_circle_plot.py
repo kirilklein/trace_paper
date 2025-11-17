@@ -20,7 +20,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 from main.helpers import ensure_output_directory, print_dataset_overview
 from trace.constants import METHODS_WITH_ARMS
@@ -112,6 +111,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Verbose output",
+    )
+    parser.add_argument(
+        "--exclude-outcomes",
+        type=str,
+        default="",
+        help="Comma-separated list of outcome codes to exclude (e.g., 'A10BJ,A10BK')",
+    )
+    parser.add_argument(
+        "--exclude-groups",
+        type=str,
+        default="",
+        help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
     )
     return parser
 
@@ -252,8 +263,38 @@ def main() -> None:
         print("No rows with finite log_RR. Exiting.")
         return
 
-    # Derive ATC group (first letter of outcome) and sort by outcome
+    # Derive ATC group (first letter of outcome)
     df_plot["group"] = df_plot["outcome"].astype(str).str[0]
+
+    # Apply optional filters for outcomes and groups
+    n_before_filter = len(df_plot)
+    if args.exclude_outcomes:
+        exclude_list = [
+            o.strip() for o in args.exclude_outcomes.split(",") if o.strip()
+        ]
+        if exclude_list:
+            df_plot = df_plot[~df_plot["outcome"].isin(exclude_list)].copy()
+            print(
+                f"\nExcluded {len(exclude_list)} outcome(s): {', '.join(exclude_list)}"
+            )
+
+    if args.exclude_groups:
+        exclude_list = [g.strip() for g in args.exclude_groups.split(",") if g.strip()]
+        if exclude_list:
+            df_plot = df_plot[~df_plot["group"].isin(exclude_list)].copy()
+            print(f"Excluded {len(exclude_list)} group(s): {', '.join(exclude_list)}")
+
+    n_after_filter = len(df_plot)
+    if n_before_filter != n_after_filter:
+        print(
+            f"Filtered out {n_before_filter - n_after_filter} outcomes ({n_after_filter} remaining)"
+        )
+
+    if df_plot.empty:
+        print("No rows remaining after filtering. Exiting.")
+        return
+
+    # Sort by outcome for consistent ordering
     df_plot = df_plot.sort_values("outcome").reset_index(drop=True)
 
     print(f"\nPrepared {len(df_plot)} outcomes for plotting")
