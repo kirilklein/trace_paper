@@ -22,7 +22,7 @@ from typing import Iterable, List
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+from adjustText import adjust_text
 
 from main.helpers import ensure_output_directory, print_dataset_overview
 from trace.constants import METHODS_WITH_ARMS
@@ -369,26 +369,29 @@ def main() -> None:
         ax.set_xscale("log")
         ax.set_xlim(0.0001, 1.0)
 
-        # Annotate top N significant codes per panel
+        # Annotate top N significant codes per panel using adjustText
         if args.annotate_top > 0 and len(d) > 0:
             # Sort by q-value (most significant first) and take top N
             d_sorted = d.sort_values("q_value").head(args.annotate_top)
+            texts = []
             for idx, row in d_sorted.iterrows():
-                # Simple offset to reduce overlap
-                offset_x = 1.2  # Slight offset in log space
-                offset_y = 0.1 if row["log_RR"] > 0 else -0.1
-                ax.annotate(
+                text = ax.text(
+                    row["prevalence"],
+                    row["log_RR"],
                     row["outcome"],
-                    xy=(row["prevalence"], row["log_RR"]),
-                    xytext=(row["prevalence"] * offset_x, row["log_RR"] + offset_y),
                     fontsize=7,
                     alpha=0.8,
-                    arrowprops=dict(
-                        arrowstyle="->",
-                        connectionstyle="arc3,rad=0.2",
-                        alpha=0.5,
-                        lw=0.5,
-                    ),
+                )
+                texts.append(text)
+
+            # Use adjust_text to automatically position labels and avoid overlap
+            if texts:
+                adjust_text(
+                    texts,
+                    ax=ax,
+                    arrowprops=dict(arrowstyle="->", color="gray", alpha=0.5, lw=0.5),
+                    expand_points=(1.5, 1.5),
+                    expand_text=(1.2, 1.2),
                 )
 
     # Hide unused axes (if any)
