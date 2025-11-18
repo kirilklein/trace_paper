@@ -124,6 +124,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
     )
+    parser.add_argument(
+        "--min-prevalence",
+        type=float,
+        default=0.01,
+        help="Minimum prevalence threshold (applies to min of both arms)",
+    )
     return parser
 
 
@@ -242,6 +248,34 @@ def main() -> None:
             f"q-value summary: min={finite_q.min():.3e}, "
             f"median={finite_q.median():.3e}, max={finite_q.max():.3e}"
         )
+
+    # ------------------------------------------------------------------
+    # Apply prevalence filter
+    # ------------------------------------------------------------------
+    print(f"\nApplying prevalence filter (min threshold: {args.min_prevalence:.3f})...")
+    n_before_prev = len(df_pooled)
+    min_prev = df_pooled[["p0_hat", "p1_hat"]].min(axis=1)
+    df_pooled = df_pooled[min_prev >= args.min_prevalence].copy()
+    n_after_prev = len(df_pooled)
+    
+    if n_before_prev != n_after_prev:
+        print(
+            f"Filtered out {n_before_prev - n_after_prev} outcomes below prevalence threshold "
+            f"({n_after_prev} remaining)"
+        )
+    
+    if df_pooled.empty:
+        print("No outcomes remaining after prevalence filter. Exiting.")
+        return
+    
+    # Show prevalence range of remaining outcomes
+    remaining_min_prev = df_pooled[["p0_hat", "p1_hat"]].min(axis=1)
+    print(
+        f"Prevalence range (min of arms): "
+        f"min={remaining_min_prev.min():.4f}, "
+        f"median={remaining_min_prev.median():.4f}, "
+        f"max={remaining_min_prev.max():.4f}"
+    )
 
     # ------------------------------------------------------------------
     # Prepare plotting dataframe
