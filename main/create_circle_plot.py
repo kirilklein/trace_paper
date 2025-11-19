@@ -125,6 +125,54 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
     )
     parser.add_argument(
+        "--group-label-radius",
+        type=float,
+        default=-1.8,
+        help="Radial position for ATC group labels (negative = further from center, default: -1.8)",
+    )
+    parser.add_argument(
+        "--radial-limit",
+        type=float,
+        default=None,
+        help="Maximum radial extent (most negative ylim). If not set, uses fixed limit of -3.",
+    )
+    parser.add_argument(
+        "--max-bar-radius",
+        type=float,
+        default=None,
+        help="Radial position where longest bar should end (e.g., 0.4). If not set, bars use original scale.",
+    )
+    parser.add_argument(
+        "--show-separator-circle",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Draw a circular separator line between bars and labels",
+    )
+    parser.add_argument(
+        "--separator-circle-margin",
+        type=float,
+        default=0.05,
+        help="Radial gap between longest bar and separator circle",
+    )
+    parser.add_argument(
+        "--separator-circle-color",
+        type=str,
+        default="gray",
+        help="Color of the separator circle line",
+    )
+    parser.add_argument(
+        "--separator-circle-linewidth",
+        type=float,
+        default=1.5,
+        help="Width of the separator circle line",
+    )
+    parser.add_argument(
+        "--separator-circle-linestyle",
+        type=str,
+        default="-",
+        help="Line style of the separator circle (e.g., '-', '--', ':')",
+    )
+    parser.add_argument(
         "--min-prevalence",
         type=float,
         default=0.01,
@@ -355,6 +403,14 @@ def main() -> None:
             log_rr_col="log_RR",
             q_value_col="q_value",
             group_col="group",
+            group_label_radius=args.group_label_radius,
+            radial_limit=args.radial_limit,
+            max_bar_radius=args.max_bar_radius,
+            show_separator_circle=args.show_separator_circle,
+            separator_circle_margin=args.separator_circle_margin,
+            separator_circle_color=args.separator_circle_color,
+            separator_circle_linewidth=args.separator_circle_linewidth,
+            separator_circle_linestyle=args.separator_circle_linestyle,
         )
 
         ensure_output_directory(output_dir)

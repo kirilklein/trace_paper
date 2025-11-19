@@ -28,6 +28,14 @@ def plot_circle(
     neutral_color: str = "lightgrey",
     group_label_fontsize: int = 12,
     group_label_fontweight: str = "bold",
+    group_label_radius: float = -1.8,
+    radial_limit: float | None = None,
+    max_bar_radius: float | None = None,
+    show_separator_circle: bool = False,
+    separator_circle_margin: float = 0.05,
+    separator_circle_color: str = "gray",
+    separator_circle_linewidth: float = 1.5,
+    separator_circle_linestyle: str = "-",
 ) -> plt.Figure:
     """Create a circular (polar) plot of log risk ratios grouped by ATC class.
 
@@ -66,6 +74,26 @@ def plot_circle(
         Font size for ATC group labels
     group_label_fontweight : str, default "bold"
         Font weight for ATC group labels
+    group_label_radius : float, default -1.8
+        Radial position for ATC group labels (negative values place labels
+        outside the bars; more negative = further from center)
+    radial_limit : float or None, default None
+        Maximum radial extent (most negative ylim value). If None, uses fixed
+        limit of -3 to accommodate labels at various positions.
+    max_bar_radius : float or None, default None
+        Radial position where the longest bar should end. If specified, all bars
+        are scaled proportionally so the longest reaches this radius. If None,
+        bars use original unscaled values.
+    show_separator_circle : bool, default False
+        Whether to draw a circular separator line between bars and labels
+    separator_circle_margin : float, default 0.05
+        Radial gap between longest bar and separator circle
+    separator_circle_color : str, default "gray"
+        Color of the separator circle line
+    separator_circle_linewidth : float, default 1.5
+        Width of the separator circle line
+    separator_circle_linestyle : str, default "-"
+        Line style of the separator circle
 
     Returns
     -------
@@ -138,14 +166,52 @@ def plot_circle(
     # Create figure with polar projection
     fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": "polar"})
 
+    # Scale bars if max_bar_radius is specified
+    if max_bar_radius is not None:
+        # Scale so longest bar reaches max_bar_radius
+        max_original_length = np.max(np.abs(log_rr_values))
+        target_length = 1 - max_bar_radius  # How long the longest bar should be
+        scale_factor = target_length / max_original_length
+        bar_heights = -np.abs(log_rr_values) * scale_factor
+        actual_max_bar_length = target_length
+    else:
+        # Use original values
+        bar_heights = -np.abs(log_rr_values)
+        actual_max_bar_length = np.max(np.abs(log_rr_values))
+
     # Plot bars extending downward from radius=1
     ax.bar(
         theta,
-        -np.abs(log_rr_values),
+        bar_heights,
         bottom=1,
         width=width,
         color=colors_list,
     )
+
+    # Calculate separator circle radius based on actual (possibly scaled) bar length
+    circle_radius = 1 - actual_max_bar_length - separator_circle_margin
+
+    # Set radial limits
+    if radial_limit is None:
+        # Use fixed generous limit that accommodates labels at various positions
+        # This keeps bar scale consistent when you move labels
+        ax.set_ylim(-3, 1)
+    else:
+        ax.set_ylim(radial_limit, 1)
+
+    # Draw separator circle
+    if show_separator_circle:
+        circle_theta = np.linspace(0, 2*np.pi, 200)
+        circle_r = np.full(200, circle_radius)
+        ax.plot(
+            circle_theta,
+            circle_r,
+            color=separator_circle_color,
+            linewidth=separator_circle_linewidth,
+            linestyle=separator_circle_linestyle,
+            clip_on=False,
+            zorder=10,
+        )
 
     # Add ATC group labels at mean theta position of each group
     for group in groups:
@@ -158,16 +224,17 @@ def plot_circle(
         idx = int(np.mean(group_indices))
         mid_theta = theta[idx]
 
-        # Place label slightly inside the inner circle
+        # Place label at specified radial distance
         ax.text(
             mid_theta,
-            -1.2,
+            group_label_radius,
             str(group),
             ha="center",
             va="center",
             rotation_mode="anchor",
             fontsize=group_label_fontsize,
             fontweight=group_label_fontweight,
+            clip_on=False,
         )
 
     # Add vertical separator lines between groups
@@ -179,6 +246,19 @@ def plot_circle(
         separator_theta = theta[idx - 1] + width / 2
         ax.axvline(
             separator_theta,
+            color="gray",
+            lw=0.5,
+            ls="--",
+            clip_on=False,
+            ymax=1,
+        )
+
+    # Add separator at wrap-around point (between last and first group)
+    # Only needed if first and last outcomes belong to different groups
+    if df[group_col].iloc[0] != df[group_col].iloc[-1]:
+        wraparound_theta = theta[-1] + width / 2
+        ax.axvline(
+            wraparound_theta,
             color="gray",
             lw=0.5,
             ls="--",
