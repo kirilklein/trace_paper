@@ -15,6 +15,11 @@ It employs a hybrid inference approach to ensure robust statistics:
    This is generally more robust for probabilities near 0 or 1.
    (See: _compute_logit_difference_p_value)
 
+3. **Log Risk Ratio (log-RR) with CIs**:
+   Calculated using the Delta Method on the log scale for pooled estimates.
+   Var(log(RR)) = (1-p1)² SE(η1)² + (1-p0)² SE(η0)²
+   (See: _compute_delta_method_rd_ci, pooled mode only)
+
 Workflow:
   Inputs (Probs) -> Logit Transform -> Pooling
   -> Call (1) for RD and CIs
@@ -396,7 +401,26 @@ def _compute_delta_method_rd_ci(
     rd_lo = rd - z_crit * se_rd
     rd_hi = rd + z_crit * se_rd
 
-    # 4. Diagnostics
+    # 4. Compute log(RR) and its CI using delta method
+    # Avoid log(0) with small epsilon
+    p1_safe = np.maximum(p1, 1e-10)
+    p0_safe = np.maximum(p0, 1e-10)
+
+    log_rr = np.log(p1_safe) - np.log(p0_safe)
+
+    # Delta method for log(RR):
+    # d/dη1[log(p1)] = 1-p1, d/dη0[log(p0)] = 1-p0
+    deriv_log_p1 = 1 - p1
+    deriv_log_p0 = 1 - p0
+
+    var_log_rr = (deriv_log_p1**2 * se1**2) + (deriv_log_p0**2 * se0**2)
+    se_log_rr = np.sqrt(var_log_rr)
+
+    # CI on log scale
+    log_rr_lo = log_rr - z_crit * se_log_rr
+    log_rr_hi = log_rr + z_crit * se_log_rr
+
+    # 5. Diagnostics
     if verbose:
         n_tiny_se = np.sum(se_rd < 1e-6)
         if n_tiny_se > 0:
@@ -409,6 +433,10 @@ def _compute_delta_method_rd_ci(
         "RD_CI95_upper": rd_hi,
         "p1_hat": p1,
         "p0_hat": p0,
+        "log_RR": log_rr,
+        "SE_log_RR": se_log_rr,
+        "log_RR_CI95_lower": log_rr_lo,
+        "log_RR_CI95_upper": log_rr_hi,
     }
 
 
@@ -460,6 +488,9 @@ def compute_rd_pvalues(
 
         out = df_logit.copy()
         for k, v in rd_stats.items():
+            # Only add log_RR columns in pooled mode
+            if k.startswith("log_RR") or k.startswith("SE_log_RR"):
+                continue  # Skip in per-run mode
             out[k] = v
         for k, v in p_value_stats.items():
             out[k] = v
