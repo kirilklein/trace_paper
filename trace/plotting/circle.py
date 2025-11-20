@@ -201,7 +201,7 @@ def plot_circle(
 
     # Draw separator circle
     if show_separator_circle:
-        circle_theta = np.linspace(0, 2*np.pi, 200)
+        circle_theta = np.linspace(0, 2 * np.pi, 200)
         circle_r = np.full(200, circle_radius)
         ax.plot(
             circle_theta,
