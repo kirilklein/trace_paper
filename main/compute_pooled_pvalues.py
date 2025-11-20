@@ -15,6 +15,7 @@ from trace.plotting.volcano import prepare_volcano_data
 from trace.statistics import compute_rd_pvalues
 import numpy as np
 
+
 def main() -> None:
     """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
