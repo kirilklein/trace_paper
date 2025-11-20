@@ -122,6 +122,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Number of top significant codes to annotate per ATC group panel (0 to disable)",
     )
+    parser.add_argument(
+        "--exclude-outcomes",
+        type=str,
+        default="",
+        help="Comma-separated list of outcome codes to exclude (e.g., 'A10BJ,A10BK')",
+    )
+    parser.add_argument(
+        "--exclude-groups",
+        type=str,
+        default="",
+        help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
+    )
     return parser
 
 
@@ -298,6 +310,31 @@ def main() -> None:
     # Derive ATC group (first letter of outcome) and prepare plotting dataframe
     # ------------------------------------------------------------------
     df_plot["group"] = df_plot["outcome"].astype(str).str[0]
+
+    # Apply optional filters for outcomes and groups
+    n_before_filter = len(df_plot)
+    if args.exclude_outcomes:
+        exclude_list = [
+            o.strip() for o in args.exclude_outcomes.split(",") if o.strip()
+        ]
+        if exclude_list:
+            df_plot = df_plot[~df_plot["outcome"].isin(exclude_list)].copy()
+            print(
+                f"\nExcluded {len(exclude_list)} outcome(s): {', '.join(exclude_list)}"
+            )
+
+    if args.exclude_groups:
+        exclude_list = [g.strip() for g in args.exclude_groups.split(",") if g.strip()]
+        if exclude_list:
+            df_plot = df_plot[~df_plot["group"].isin(exclude_list)].copy()
+            print(f"Excluded {len(exclude_list)} group(s): {', '.join(exclude_list)}")
+
+    n_after_filter = len(df_plot)
+    if n_after_filter < n_before_filter:
+        print(
+            f"After filtering: {n_after_filter} rows (removed {n_before_filter - n_after_filter})"
+        )
+
     group_order = sorted(df_plot["group"].dropna().unique())
 
     # ------------------------------------------------------------------
