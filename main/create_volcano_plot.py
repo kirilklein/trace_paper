@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from main.helpers import (
@@ -226,10 +227,11 @@ def main() -> None:
             arm_pooling=args.arm_pooling,
             verbose=False,
         )
-        # Derive pooled RR from pooled arm probabilities; keep p_value from logit t-test
+        # Use computed log_RR from pooled estimates; keep p_value from logit t-test
+        # log_RR, log_RR_CI95_lower, log_RR_CI95_upper already computed via delta method
         if not df_pooled.empty:
             df_pooled = df_pooled.copy()
-            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
+            df_pooled["RR"] = np.exp(df_pooled["log_RR"])
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
         if df_pooled.empty:
