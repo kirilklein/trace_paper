@@ -13,7 +13,7 @@ from trace.constants import METHODS_WITH_ARMS
 from trace.io import filter_methods_with_arm_cis, load_estimates
 from trace.plotting.volcano import prepare_volcano_data
 from trace.statistics import compute_rd_pvalues
-
+import numpy as np
 
 def main() -> None:
     """Main entry point with CLI argument parsing."""
@@ -139,10 +139,11 @@ def main() -> None:
             verbose=False,
         )
 
-        # Derive pooled RR from pooled arm probabilities
+        # Use computed log_RR from pooled estimates
+        # log_RR, log_RR_CI95_lower, log_RR_CI95_upper already computed via delta method
         if not df_pooled.empty:
             df_pooled = df_pooled.copy()
-            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
+            df_pooled["RR"] = np.exp(df_pooled["log_RR"])
 
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
