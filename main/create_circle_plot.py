@@ -305,17 +305,17 @@ def main() -> None:
     min_prev = df_pooled[["p0_hat", "p1_hat"]].min(axis=1)
     df_pooled = df_pooled[min_prev >= args.min_prevalence].copy()
     n_after_prev = len(df_pooled)
-    
+
     if n_before_prev != n_after_prev:
         print(
             f"Filtered out {n_before_prev - n_after_prev} outcomes below prevalence threshold "
             f"({n_after_prev} remaining)"
         )
-    
+
     if df_pooled.empty:
         print("No outcomes remaining after prevalence filter. Exiting.")
         return
-    
+
     # Show prevalence range of remaining outcomes
     remaining_min_prev = df_pooled[["p0_hat", "p1_hat"]].min(axis=1)
     print(
