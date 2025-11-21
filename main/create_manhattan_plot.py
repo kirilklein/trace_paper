@@ -22,6 +22,8 @@ from typing import Iterable, List
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter
 from adjustText import adjust_text
 
 from main.helpers import ensure_output_directory, print_dataset_overview
@@ -123,6 +125,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of top significant codes to annotate per ATC group panel (0 to disable)",
     )
     parser.add_argument(
+        "--annotate-fontsize",
+        type=float,
+        default=9.0,
+        help="Font size for annotated outcome labels (ignored if --annotate-top=0)",
+    )
+    parser.add_argument(
+        "--annotate-alpha",
+        type=float,
+        default=0.8,
+        help="Alpha (opacity) for annotated outcome labels",
+    )
+    parser.add_argument(
         "--exclude-outcomes",
         type=str,
         default="",
@@ -133,6 +147,30 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="",
         help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
+    )
+    parser.add_argument(
+        "--per-group-ylim",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use symmetric per-group y-limits around zero instead of a globally shared "
+            "y-axis across ATC groups"
+        ),
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=300,
+        help="DPI for output figure files",
+    )
+    parser.add_argument(
+        "--save-vector",
+        choices=["none", "pdf", "svg", "both"],
+        default="none",
+        help=(
+            "Optionally save an additional vector-format figure (PDF/SVG) alongside "
+            "the default PNG"
+        ),
     )
     return parser
 
@@ -377,12 +415,15 @@ def main() -> None:
     n_cols = min(4, n_groups)
     n_rows = int(ceil(n_groups / n_cols))
 
+    # Decide whether to share y-axis across panels or allow per-group limits
+    sharey = not args.per_group_ylim
+
     fig, axs = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(4 * n_cols, 3.5 * n_rows),
+        figsize=(4.2 * n_cols, 3.8 * n_rows),
         sharex=True,
-        sharey=True,
+        sharey=sharey,
     )
 
     # Flatten axes array for easy indexing
@@ -390,6 +431,23 @@ def main() -> None:
         axs_flat: Iterable[plt.Axes] = axs.flatten()
     else:
         axs_flat = [axs]
+
+    if args.per_group_ylim:
+        print(
+            "Using per-group symmetric y-limits around zero for each ATC group panel."
+        )
+
+    # Optional clean y-ticks (symmetric around zero) based on global log_RR range
+    finite_log_rr_all = (
+        df_plot["log_RR"].replace([np.inf, -np.inf], np.nan).dropna()
+    )
+    yticks: List[float] | None = None
+    if not finite_log_rr_all.empty:
+        max_abs_all = float(np.abs(finite_log_rr_all).max())
+        if max_abs_all <= 2.5:
+            yticks = [-2.0, -1.0, 0.0, 1.0, 2.0]
+        elif max_abs_all <= 3.5:
+            yticks = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
 
     for i, group in enumerate(group_order):
         ax = list(axs_flat)[i]
@@ -399,12 +457,27 @@ def main() -> None:
         c = d["color"].to_numpy()
 
         ax.scatter(x, y, s=30, c=c)
-        ax.set_title(f"ATC Group {group}", fontsize=12, y=0.9)
+        ax.set_title(f"ATC group {group} (n={len(d)})", fontsize=12, y=0.9)
         ax.axhline(y=0, color="black", linestyle="--", alpha=0.5)
         ax.grid(axis="y", linestyle="--", alpha=0.6)
         ax.grid(axis="x", linestyle="--", alpha=0.6)
         ax.set_xscale("log")
         ax.set_xlim(0.0001, 1.0)
+
+        # Optional per-group symmetric y-limits around zero
+        if args.per_group_ylim and len(d) > 0:
+            finite_group = d["log_RR"].replace([np.inf, -np.inf], np.nan).dropna()
+            if not finite_group.empty:
+                max_abs = float(np.abs(finite_group).max())
+                # Ensure a minimal visible range even for very small effects
+                min_range = 0.5
+                if max_abs < min_range:
+                    max_abs = min_range
+                y_max = max_abs * 1.1
+                ax.set_ylim(-y_max, y_max)
+
+        if yticks is not None:
+            ax.set_yticks(yticks)
 
         # Annotate top N significant codes per panel using adjustText
         if args.annotate_top > 0 and len(d) > 0:
@@ -416,8 +489,14 @@ def main() -> None:
                     row["prevalence"],
                     row["log_RR"],
                     row["outcome"],
-                    fontsize=7,
-                    alpha=0.8,
+                    fontsize=args.annotate_fontsize,
+                    alpha=args.annotate_alpha,
+                    bbox=dict(
+                        boxstyle="round,pad=0.2",
+                        facecolor="white",
+                        edgecolor="none",
+                        alpha=0.7,
+                    ),
                 )
                 texts.append(text)
 
@@ -440,7 +519,7 @@ def main() -> None:
     for r in range(n_rows):
         idx = r * n_cols
         if idx < n_groups:
-            axs_list[idx].set_ylabel("Log Relative Risk", fontsize=11)
+            axs_list[idx].set_ylabel("Log relative risk", fontsize=11)
 
     # Shared x-label on bottom row
     bottom_indices: List[int] = list(range((n_rows - 1) * n_cols, n_rows * n_cols))
@@ -448,14 +527,102 @@ def main() -> None:
         if idx >= n_groups:
             continue
         ax = axs_list[idx]
-        ax.set_xlabel("Treated Prevalence", fontsize=11)
+        ax.set_xlabel("Treated prevalence (%)", fontsize=11)
         ax.set_xticks([0.0001, 0.001, 0.01, 0.1, 1.0])
+        ax.xaxis.set_major_formatter(
+            FuncFormatter(lambda value, pos: f"{value * 100:g}%")
+        )
 
-    fig.tight_layout(h_pad=0.3, w_pad=0.3)
+    # Add a compact legend explaining the color encoding
+    legend_elements = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="#9c0202",
+            markeredgecolor="none",
+            markersize=6,
+            label=r"log RR > 0, q ≤ 0.001",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="#bf3a3a",
+            markeredgecolor="none",
+            markersize=6,
+            label=r"log RR > 0, 0.001 < q ≤ 0.01",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="#ffb3b3",
+            markeredgecolor="none",
+            markersize=6,
+            label=r"log RR > 0, 0.01 < q ≤ 0.05",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="lightgrey",
+            markeredgecolor="none",
+            markersize=6,
+            label="q > 0.05 or missing",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="#0033cc",
+            markeredgecolor="none",
+            markersize=6,
+            label="log RR < 0 (blue scale mirrors reds)",
+        ),
+    ]
+
+    fig.legend(
+        handles=legend_elements,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
+        ncol=2,
+        fontsize=9,
+        title="Effect direction and q-value",
+        frameon=False,
+    )
+
+    # Add a global title summarizing dataset, method, pooling, and adjustment
+    fig.suptitle(
+        f"{input_folder_name} – {method} "
+        f"(pooling: {args.arm_pooling}, q-adjust: {args.adjust}, scope={args.adjust_per})",
+        fontsize=14,
+        y=0.98,
+    )
+
+    # Adjust layout to leave room for the suptitle and bottom legend
+    fig.tight_layout(h_pad=0.3, w_pad=0.3, rect=(0.02, 0.08, 0.98, 0.94))
 
     ensure_output_directory(output_dir)
-    output_png = output_dir / f"manhattan_prevalence_log_rr_{method}.png"
-    fig.savefig(output_png, dpi=300, bbox_inches="tight")
+    output_stem = output_dir / f"manhattan_prevalence_log_rr_{method}"
+    output_png = output_stem.with_suffix(".png")
+    fig.savefig(output_png, dpi=args.dpi, bbox_inches="tight")
+
+    # Optional vector-format exports for publication
+    if args.save_vector in {"pdf", "both"}:
+        output_pdf = output_stem.with_suffix(".pdf")
+        fig.savefig(output_pdf, dpi=args.dpi, bbox_inches="tight")
+        print(f"Saved vector PDF figure to: {output_pdf}")
+    if args.save_vector in {"svg", "both"}:
+        output_svg = output_stem.with_suffix(".svg")
+        fig.savefig(output_svg, dpi=args.dpi, bbox_inches="tight")
+        print(f"Saved vector SVG figure to: {output_svg}")
+
     plt.close(fig)
 
     print(f"Saved Manhattan-style plot to: {output_png}")
