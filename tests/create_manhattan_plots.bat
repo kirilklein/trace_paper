@@ -40,6 +40,8 @@ python -m main.create_volcano_plot ^
   --adjust bh ^
   --arm-pooling inter_intra_variance ^
   --diagnostics ^
+  --exclude-outcomes "A10BJ" ^
+  --exclude-groups "V"
   --verbose
 
 echo.
@@ -53,6 +55,8 @@ python -m main.create_volcano_plot ^
   --adjust bh ^
   --arm-pooling inter_intra_variance ^
   --diagnostics ^
+  --exclude-outcomes "A10BJ" ^
+  --exclude-groups "V"
   --verbose
 
 echo.
@@ -62,15 +66,14 @@ echo.
 REM ============================================================================
 REM Example with filtering for Manhattan plots (uncomment and modify as needed):
 REM ============================================================================
-REM python -m main.create_manhattan_plot ^
-REM   --input-dir data/semaglutide ^
-REM   --output-dir figures ^
-REM   --method IPW ^
-REM   --adjust bh ^
-REM   --arm-pooling inter_intra_variance ^
-REM   --annotate-top 5 ^
-REM   --exclude-outcomes "A10BJ,A10BK" ^
-REM   --exclude-groups "V,W"
+python -m main.create_manhattan_plot ^
+  --input-dir data/semaglutide/cvd ^
+  --method IPW ^
+  --adjust bh ^
+  --arm-pooling inter_intra_variance ^
+  --annotate-top 5 ^
+  --exclude-outcomes "A10BJ" ^
+  --exclude-groups "V"
 
 REM ============================================================================
 REM Example volcano plot with fast mode (skip extra plots, uncomment to use):
