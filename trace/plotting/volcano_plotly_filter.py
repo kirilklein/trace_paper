@@ -459,7 +459,7 @@ def build_plotly_overlay_methods(
             )
 
         if line_x and line_y:
-            trace_idx_before = len(fig.data)
+            # trace_idx_before = len(fig.data)
             fig.add_trace(
                 go.Scatter(
                     x=line_x,
@@ -488,7 +488,7 @@ def build_plotly_overlay_methods(
             if prefix_subset.empty:
                 continue
 
-            trace_idx_before = len(fig.data)
+            # trace_idx_before = len(fig.data)
             fig.add_trace(
                 go.Scatter(
                     x=prefix_subset[effect_col],
