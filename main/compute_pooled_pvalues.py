@@ -97,7 +97,7 @@ def main() -> None:
 
     # Determine effect parameters
     effect_type = args.effect_type
-    
+
     # Create output suffix for files
     output_suffix = effect_type.lower().replace("-", "_")
 
@@ -182,31 +182,41 @@ def main() -> None:
         q = np.empty(len(df_results), dtype=float)
         for method in df_results["method"].unique():
             mask = df_results["method"] == method
-            q[mask] = adjust_pvalues(df_results.loc[mask, "p_value"].values, method=args.adjust)
+            q[mask] = adjust_pvalues(
+                df_results.loc[mask, "p_value"].values, method=args.adjust
+            )
         df_results["q_value"] = q
     else:  # "global"
-        df_results["q_value"] = adjust_pvalues(df_results["p_value"].values, method=args.adjust)
+        df_results["q_value"] = adjust_pvalues(
+            df_results["p_value"].values, method=args.adjust
+        )
 
     # Add neglog10p for convenience
     p_floor = 1e-20
-    df_results["neglog10p"] = -np.log10(np.clip(df_results["p_value"].values, p_floor, 1.0))
+    df_results["neglog10p"] = -np.log10(
+        np.clip(df_results["p_value"].values, p_floor, 1.0)
+    )
 
     # Reorder columns for readability (keep all columns)
     priority_cols = ["method", "outcome"]
 
     # Add effect columns based on effect type
     if effect_type in ["RR", "log-RR"]:
-        priority_cols.extend([
-            "RR", "log_RR", "SE_log_RR", 
-            "log_RR_CI95_lower", "log_RR_CI95_upper",
-            "p1_hat", "p0_hat"
-        ])
+        priority_cols.extend(
+            [
+                "RR",
+                "log_RR",
+                "SE_log_RR",
+                "log_RR_CI95_lower",
+                "log_RR_CI95_upper",
+                "p1_hat",
+                "p0_hat",
+            ]
+        )
     else:  # RD
-        priority_cols.extend([
-            "RD", "SE_RD", 
-            "RD_CI95_lower", "RD_CI95_upper",
-            "p1_hat", "p0_hat"
-        ])
+        priority_cols.extend(
+            ["RD", "SE_RD", "RD_CI95_lower", "RD_CI95_upper", "p1_hat", "p0_hat"]
+        )
 
     # Add statistics columns
     priority_cols.extend(["p_value", "q_value", "neglog10p"])
@@ -215,16 +225,20 @@ def main() -> None:
     remaining_cols = [c for c in df_results.columns if c not in priority_cols]
 
     # Combine: priority columns first, then remaining
-    ordered_cols = [c for c in priority_cols if c in df_results.columns] + remaining_cols
+    ordered_cols = [
+        c for c in priority_cols if c in df_results.columns
+    ] + remaining_cols
     df_results = df_results[ordered_cols]
 
     # Save results to CSV
     output_path = output_dir / f"pooled_results_{output_suffix}.csv"
     df_results.to_csv(output_path, index=False)
     print(f"\nSaved pooled results to: {output_path}")
-    
+
     # Print column info
-    print(f"Saved {len(df_results.columns)} columns: {', '.join(df_results.columns[:10])}{'...' if len(df_results.columns) > 10 else ''}")
+    print(
+        f"Saved {len(df_results.columns)} columns: {', '.join(df_results.columns[:10])}{'...' if len(df_results.columns) > 10 else ''}"
+    )
 
     # Print summary statistics
     print("\n" + "=" * 80)
