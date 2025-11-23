@@ -149,15 +149,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated list of ATC groups (first letter) to exclude (e.g., 'V,W')",
     )
     parser.add_argument(
-        "--per-group-ylim",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Use symmetric per-group y-limits around zero instead of a globally shared "
-            "y-axis across ATC groups"
-        ),
-    )
-    parser.add_argument(
         "--dpi",
         type=int,
         default=300,
@@ -415,15 +406,12 @@ def main() -> None:
     n_cols = min(3, n_groups)
     n_rows = int(ceil(n_groups / n_cols))
 
-    # Decide whether to share y-axis across panels or allow per-group limits
-    sharey = not args.per_group_ylim
-
     fig, axs = plt.subplots(
         n_rows,
         n_cols,
         figsize=(4.2 * n_cols, 3.8 * n_rows),
         sharex=True,
-        sharey=sharey,
+        sharey=True,
     )
 
     # Flatten axes array for easy indexing
@@ -431,23 +419,6 @@ def main() -> None:
         axs_flat: Iterable[plt.Axes] = axs.flatten()
     else:
         axs_flat = [axs]
-
-    if args.per_group_ylim:
-        print(
-            "Using per-group symmetric y-limits around zero for each ATC group panel."
-        )
-
-    # Optional clean y-ticks (symmetric around zero) based on global log_RR range
-    finite_log_rr_all = (
-        df_plot["log_RR"].replace([np.inf, -np.inf], np.nan).dropna()
-    )
-    yticks: List[float] | None = None
-    if not finite_log_rr_all.empty:
-        max_abs_all = float(np.abs(finite_log_rr_all).max())
-        if max_abs_all <= 2.5:
-            yticks = [-2.0, -1.0, 0.0, 1.0, 2.0]
-        elif max_abs_all <= 3.5:
-            yticks = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
 
     for i, group in enumerate(group_order):
         ax = list(axs_flat)[i]
@@ -464,25 +435,11 @@ def main() -> None:
         ax.set_xscale("log")
         ax.set_xlim(0.0001, 1.0)
 
-        # Optional per-group symmetric y-limits around zero
-        if args.per_group_ylim and len(d) > 0:
-            finite_group = d["log_RR"].replace([np.inf, -np.inf], np.nan).dropna()
-            if not finite_group.empty:
-                max_abs = float(np.abs(finite_group).max())
-                # Ensure a minimal visible range even for very small effects
-                min_range = 0.5
-                if max_abs < min_range:
-                    max_abs = min_range
-                y_max = max_abs * 1.1
-                ax.set_ylim(-y_max, y_max)
-
-        if yticks is not None:
-            ax.set_yticks(yticks)
-
         # Annotate top N significant codes per panel using adjustText
         if args.annotate_top > 0 and len(d) > 0:
-            # Sort by q-value (most significant first) and take top N
-            d_sorted = d.sort_values("q_value").head(args.annotate_top)
+            # Filter for significance (q <= 0.05), then sort by q-value and take top N
+            d_sig = d[d["q_value"] <= 0.05]
+            d_sorted = d_sig.sort_values("q_value").head(args.annotate_top)
             texts = []
             for idx, row in d_sorted.iterrows():
                 text = ax.text(
