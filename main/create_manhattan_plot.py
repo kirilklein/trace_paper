@@ -590,7 +590,7 @@ def main() -> None:
     fig.legend(
         handles=legend_elements,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
+        bbox_to_anchor=(0.5, 0.1),
         ncol=2,
         fontsize=9,
         title="Effect direction and q-value",
