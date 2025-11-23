@@ -457,7 +457,7 @@ def main() -> None:
         c = d["color"].to_numpy()
 
         ax.scatter(x, y, s=30, c=c)
-        ax.set_title(f"ATC group {group} (n={len(d)})", fontsize=12, y=0.9)
+        ax.set_title(f"{group} (n={len(d)})", fontsize=13, y=0.9, loc="left", x=0.02)
         ax.axhline(y=0, color="black", linestyle="--", alpha=0.5)
         ax.grid(axis="y", linestyle="--", alpha=0.6)
         ax.grid(axis="x", linestyle="--", alpha=0.6)
@@ -521,17 +521,27 @@ def main() -> None:
         if idx < n_groups:
             axs_list[idx].set_ylabel("Log relative risk", fontsize=11)
 
-    # Shared x-label on bottom row
-    bottom_indices: List[int] = list(range((n_rows - 1) * n_cols, n_rows * n_cols))
-    for idx in bottom_indices:
-        if idx >= n_groups:
+    # Shared x-labels: for each column, put ticks/label on the lowest row
+    # that actually contains a panel (handles partially filled last rows).
+    for c in range(n_cols):
+        target_idx: int | None = None
+        # Search from bottom row upwards for this column
+        for r in range(n_rows - 1, -1, -1):
+            idx = r * n_cols + c
+            if idx < n_groups:
+                target_idx = idx
+                break
+        if target_idx is None:
             continue
-        ax = axs_list[idx]
+        ax = axs_list[target_idx]
         ax.set_xlabel("Treated prevalence (%)", fontsize=11)
         ax.set_xticks([0.0001, 0.001, 0.01, 0.1, 1.0])
         ax.xaxis.set_major_formatter(
             FuncFormatter(lambda value, pos: f"{value * 100:g}%")
         )
+        # When sharing x-axes, Matplotlib may hide tick labels on all but one axis;
+        # ensure tick labels are shown on these designated bottom axes.
+        ax.tick_params(axis="x", which="both", labelbottom=True)
 
     # Add a compact legend explaining the color encoding
     legend_elements = [
@@ -602,7 +612,7 @@ def main() -> None:
         f"{input_folder_name} – {method} "
         f"(pooling: {args.arm_pooling}, q-adjust: {args.adjust}, scope={args.adjust_per})",
         fontsize=14,
-        y=0.98,
+        y=0.96,
     )
 
     # Adjust layout to leave room for the suptitle and bottom legend
