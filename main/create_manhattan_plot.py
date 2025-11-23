@@ -412,7 +412,7 @@ def main() -> None:
         print("No ATC groups present after filtering. Exiting.")
         return
 
-    n_cols = min(4, n_groups)
+    n_cols = min(3, n_groups)
     n_rows = int(ceil(n_groups / n_cols))
 
     # Decide whether to share y-axis across panels or allow per-group limits
@@ -519,7 +519,7 @@ def main() -> None:
     for r in range(n_rows):
         idx = r * n_cols
         if idx < n_groups:
-            axs_list[idx].set_ylabel("Log relative risk", fontsize=11)
+            axs_list[idx].set_ylabel("Log relative risk", fontsize=13)
 
     # Shared x-labels: for each column, put ticks/label on the lowest row
     # that actually contains a panel (handles partially filled last rows).
@@ -534,7 +534,7 @@ def main() -> None:
         if target_idx is None:
             continue
         ax = axs_list[target_idx]
-        ax.set_xlabel("Treated prevalence (%)", fontsize=11)
+        ax.set_xlabel("Treated prevalence (%)", fontsize=13)
         ax.set_xticks([0.0001, 0.001, 0.01, 0.1, 1.0])
         ax.xaxis.set_major_formatter(
             FuncFormatter(lambda value, pos: f"{value * 100:g}%")
@@ -600,9 +600,9 @@ def main() -> None:
     fig.legend(
         handles=legend_elements,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.1),
-        ncol=2,
-        fontsize=9,
+        bbox_to_anchor=(0.7, 0.2),
+        ncol=1,
+        fontsize=11,
         title="Effect direction and q-value",
         frameon=False,
     )
@@ -612,11 +612,12 @@ def main() -> None:
         f"{input_folder_name} – {method} "
         f"(pooling: {args.arm_pooling}, q-adjust: {args.adjust}, scope={args.adjust_per})",
         fontsize=14,
-        y=0.96,
+        y=0.94,
     )
 
     # Adjust layout to leave room for the suptitle and bottom legend
-    fig.tight_layout(h_pad=0.3, w_pad=0.3, rect=(0.02, 0.08, 0.98, 0.94))
+    # Slightly reduce vertical spacing between subplots to make the figure more compact.
+    fig.tight_layout(h_pad=0.12, w_pad=0.3, rect=(0.02, 0.08, 0.98, 0.94))
 
     ensure_output_directory(output_dir)
     output_stem = output_dir / f"manhattan_prevalence_log_rr_{method}"
