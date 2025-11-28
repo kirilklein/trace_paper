@@ -141,31 +141,32 @@ def main() -> None:
     print(f"Total outcomes after merging and filtering: {len(combined)}")
 
     # Prepare plot data
-    # Split into 2 parts, each with 2 columns (total 4 columns logic, but split into 2 files)
+    # Split into 2 parts, each with 3 columns (total 6 columns logic)
     n_items = len(combined)
-
-    cols_total = 4
+    
+    cols_total = 6
     chunk_size = np.ceil(n_items / cols_total).astype(int)
-
+    
     chunks = [combined.iloc[i : i + chunk_size] for i in range(0, n_items, chunk_size)]
-
-    # Ensure we have chunks for 4 columns (pad if needed)
-    while len(chunks) < 4:
+    
+    # Ensure we have chunks for 6 columns (pad if needed)
+    while len(chunks) < 6:
         chunks.append(pd.DataFrame(columns=combined.columns))
-
-    # Part 1: chunks 0 and 1
-    # Part 2: chunks 2 and 3
-
-    parts = [("part1", chunks[0:2]), ("part2", chunks[2:4])]
-
+        
+    # Part 1: chunks 0, 1, 2
+    # Part 2: chunks 3, 4, 5
+    
+    parts = [("part1", chunks[0:3]), ("part2", chunks[3:6])]
+    
     for part_name, part_chunks in parts:
         # Setup figure
         # Adjust height to fit content without excessive whitespace
         # Base margin + per-item height
-        fig_height = 2 + (chunk_size * 0.25)
-        fig, axes = plt.subplots(1, 2, figsize=(12, fig_height), sharey=False)
-        plt.subplots_adjust(wspace=0.4)
-
+        # Increased per-item height for better separation
+        fig_height = 2 + (chunk_size * 0.35)
+        fig, axes = plt.subplots(1, 3, figsize=(18, fig_height), sharey=False)
+        plt.subplots_adjust(wspace=0.5)
+        
         # If only 1 chunk in this part (rare/edge case), axes might not be array
         if not isinstance(axes, np.ndarray):
             axes = [axes]
@@ -174,17 +175,17 @@ def main() -> None:
             if i >= len(part_chunks):
                 ax.axis("off")
                 continue
-
+            
             df_chunk = part_chunks[i].copy()
             if df_chunk.empty:
                 ax.axis("off")
                 continue
-
+            
             # Reverse order for plotting (top-down)
             df_chunk = df_chunk.iloc[::-1]
-
+            
             y_pos = np.arange(len(df_chunk))
-
+            
             # Plot Semaglutide (Black)
             # Filter out missing values for this cohort
             mask_sema = df_chunk["log_RR_sema"].notna()
@@ -205,7 +206,7 @@ def main() -> None:
                     markersize=4,
                     label="Main" if i == 0 else "",
                 )
-
+            
             # Plot CVD (Gentler Green) - offset slightly
             mask_cvd = df_chunk["log_RR_cvd"].notna()
             if mask_cvd.any():
@@ -228,22 +229,22 @@ def main() -> None:
                     markersize=4,
                     label="CVD" if i == 0 else "",
                 )
-
+            
             # Formatting
             ax.set_yticks(y_pos)
-            ax.set_yticklabels(df_chunk["label"], fontsize=9)
+            ax.set_yticklabels(df_chunk["label"], fontsize=11)
             ax.axvline(
                 x=0, color="red", linestyle="--", alpha=0.5
             )  # Log RR = 0 is RR = 1
-            ax.set_xlabel("Log Risk Ratio (95% CI)", fontsize=10)
-
+            ax.set_xlabel("Log Risk Ratio (95% CI)", fontsize=12)
+            
             # Grid: both x and y
             ax.grid(True, linestyle="--", alpha=0.3)
-
+            
             # Set ylim to remove excessive whitespace
             # y_pos ranges from 0 to len(df_chunk)-1
             ax.set_ylim(-1, len(df_chunk))
-
+            
         # Legend (Global)
         legend_elements = [
             Line2D(
@@ -271,7 +272,7 @@ def main() -> None:
             ncol=2,
             bbox_to_anchor=(0.5, 0.005),
         )
-
+        
         # Save
         args.output_dir.mkdir(parents=True, exist_ok=True)
         output_path = args.output_dir / f"combined_forest_plot_log_rr_{part_name}.png"
