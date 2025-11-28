@@ -70,7 +70,7 @@ def main() -> None:
     parser.add_argument(
         "--effect-type",
         choices=["RD", "RR", "log-RR"],
-        default="RD",
+        default="log-RR",
         help="Effect measure: Risk Difference (RD), Risk Ratio (RR), or log Risk Ratio",
     )
     parser.add_argument(
@@ -419,7 +419,7 @@ def main() -> None:
         try:
             plotly_overlay = build_plotly_overlay_methods(
                 df_volcano_enriched,
-                methods=("TMLE", "IPW"),
+                methods=("IPW"),
                 method_col="method",
                 outcome_col="outcome",
                 label_map=outcome_label_map,
