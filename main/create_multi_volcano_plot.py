@@ -90,6 +90,18 @@ def main() -> None:
         help="Minimum prevalence threshold (as proportion 0-1)",
     )
     parser.add_argument(
+        "--exclude-outcomes",
+        type=str,
+        default="",
+        help="Comma-separated list of outcome codes to exclude (e.g., 'A10BJ,A10BK')",
+    )
+    parser.add_argument(
+        "--subplot-labels",
+        type=str,
+        default="",
+        help="Comma-separated mapping of dataset names to display labels (e.g., 'plus50:Main,cvd:CVD').",
+    )
+    parser.add_argument(
         "--arm-pooling",
         choices=[
             "random_effects_hksj",
@@ -109,6 +121,20 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # Parse subplot labels mapping
+    label_map = {}
+    if args.subplot_labels:
+        try:
+            pairs = [item.strip() for item in args.subplot_labels.split(",") if item.strip()]
+            for pair in pairs:
+                if ":" in pair:
+                    key, value = pair.split(":", 1)
+                    label_map[key.strip()] = value.strip()
+                else:
+                    pass
+        except Exception as e:
+            print(f"Warning: Could not parse --subplot-labels: {e}")
 
     # Determine effect parameters
     effect_type = args.effect_type
@@ -136,6 +162,8 @@ def main() -> None:
     print(f"Effect type: {effect_type}")
     print(f"Method: {args.method}")
     print(f"Adjustment: {args.adjust}")
+    if label_map:
+        print(f"Subplot labels: {label_map}")
 
     # Prepare output directory
     output_dir = args.output_dir / "multi_dataset" / args.adjust / args.arm_pooling
@@ -308,6 +336,19 @@ def main() -> None:
         how="left",
     )
 
+    # Filter excluded outcomes (after q-value calculation, to match create_manhattan_plot logic)
+    if args.exclude_outcomes:
+        exclude_list = [
+            o.strip() for o in args.exclude_outcomes.split(",") if o.strip()
+        ]
+        if exclude_list:
+            n_before_exclude = len(df_final)
+            df_final = df_final[~df_final["outcome"].isin(exclude_list)].copy()
+            n_excluded = n_before_exclude - len(df_final)
+            print(
+                f"\nExcluded {n_excluded} outcomes based on filter list: {', '.join(exclude_list)}"
+            )
+
     # If effect_col was somehow lost or not the main one, ensure it is present
     if effect_col not in df_final.columns and effect_col in df_combined.columns:
          # This happens if prepare_volcano_data renamed it or didn't include it because we passed a different col
@@ -320,7 +361,13 @@ def main() -> None:
 
     # Summary statistics
     print("\nSummary statistics:")
-    datasets = sorted(df_final["dataset"].unique())
+    
+    # Determine plotting order based on input arguments (not alphabetical sorting)
+    input_dataset_names = [d.name for d in args.input_dirs]
+    # Filter to those actually in the dataframe (handles empty results etc)
+    existing_datasets = set(df_final["dataset"].unique())
+    datasets = [name for name in input_dataset_names if name in existing_datasets]
+
     for ds in datasets:
         d = df_final[df_final["dataset"] == ds]
         n_sig = (d["q_value"] < DEFAULT_ALPHA).sum()
@@ -335,7 +382,16 @@ def main() -> None:
     if n_panels == 0:
         return
 
-    fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 5), sharey=True, sharex=True)
+    # Vertical layout: nrows=n_panels, ncols=1
+    # Independent axes: sharex=False, sharey=False
+    fig, axes = plt.subplots(
+        n_panels, 
+        1, 
+        figsize=(7, 5 * n_panels), 
+        sharey=False, 
+        sharex=False
+    )
+    
     if n_panels == 1:
         axes = [axes]
 
@@ -350,7 +406,8 @@ def main() -> None:
         
         # Ensure we have data
         if d.empty:
-            ax.set_title(ds)
+            display_title = label_map.get(ds, ds)
+            ax.set_title(display_title)
             continue
 
         # Determine colors based on q-value and effect direction
@@ -404,7 +461,11 @@ def main() -> None:
         ax.axhline(-np.log10(DEFAULT_ALPHA), linestyle="--", linewidth=1, color="gray", alpha=0.5)
         ax.axvline(null_value, linestyle="--", linewidth=1, color="gray", alpha=0.5)
 
-        ax.set_title(ds)
+        # Use mapped label if available
+        display_title = label_map.get(ds, ds)
+        ax.set_title(display_title)
+        ax.set_ylabel("-log10(p-value)")
+        # Add x-label for each subplot since sharex=False
         ax.set_xlabel(effect_label)
         ax.grid(alpha=0.2, linestyle=":", linewidth=0.8)
 
@@ -440,9 +501,8 @@ def main() -> None:
                 arrowprops=dict(arrowstyle="-", color="gray", alpha=0.5, lw=0.5),
              )
 
-    axes[0].set_ylabel("-log10(p-value)")
-
-    # Custom Legend
+    # Custom Legend (place on the first axes or figure level?)
+    # Figure level is better for shared legend
     legend_elements = [
         Line2D([0], [0], marker='o', color='w', markerfacecolor='#9c0202', markersize=8, label='Effect > 0, q ≤ 0.001'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='#bf3a3a', markersize=8, label='Effect > 0, q ≤ 0.01'),
@@ -453,14 +513,16 @@ def main() -> None:
     
     fig.legend(
         handles=legend_elements,
-        loc="upper right",
-        bbox_to_anchor=(0.99, 0.99),
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.05), # Bottom center
+        ncol=2,
         title="Significance",
         fontsize=9
     )
 
-    fig.suptitle(f"Volcano Plot ({args.method}) - {args.adjust} adjusted", fontsize=14, y=1.02)
-    fig.tight_layout()
+    fig.suptitle(f"Volcano Plot ({args.method}) - {args.adjust} adjusted", fontsize=14, y=0.99)
+    # Adjust layout to accommodate bottom legend
+    fig.tight_layout(rect=[0, 0.08, 1, 0.98]) 
 
     output_png = output_dir / f"volcano_plot_multi_{output_suffix}.png"
     fig.savefig(output_png, dpi=300, bbox_inches="tight")
