@@ -11,53 +11,70 @@ python -m main.create_manhattan_plot ^
   --method IPW ^
   --adjust bh ^
   --arm-pooling inter_intra_variance ^
-  --annotate-top 5
+  --annotate-top 5 ^
+  --exclude-outcomes "A10BJ" 
 
 echo.
 echo Plus50 Manhattan plot complete!
 echo.
 
+
 python -m main.create_manhattan_plot ^
-  --input-dir data/semaglutide/diab ^
+  --input-dir data/semaglutide/cvd ^
   --output-dir figures ^
   --method IPW ^
   --adjust bh ^
   --arm-pooling inter_intra_variance ^
-  --annotate-top 5
+  --annotate-top 5 ^
+  --exclude-outcomes "A10BJ" 
+
+
+echo.
+echo Plus50 Manhattan plot complete!
+echo.
+
+@REM python -m main.create_manhattan_plot ^
+@REM   --input-dir data/semaglutide/diab ^
+@REM   --output-dir figures ^
+@REM   --method IPW ^
+@REM   --adjust bh ^
+@REM   --arm-pooling inter_intra_variance ^
+@REM   --annotate-top 5
+@REM   --exclude-outcomes "A10BJ" ^
+@REM   --exclude-groups "V"
 
 echo.
 echo DIAB Manhattan plot complete!
 echo.
-
 REM ============================================================================
 REM Volcano Plots
 REM ============================================================================
 
-python -m main.create_volcano_plot ^
-  --input-dir data/semaglutide/plus50 ^
-  --output-dir figures ^
-  --effect-type log-RR ^
-  --adjust bh ^
-  --arm-pooling inter_intra_variance ^
-  --diagnostics ^
-  --exclude-outcomes "A10BJ" ^
-  --exclude-groups "V"
-  --verbose
+@REM python -m main.create_volcano_plot ^
+@REM   --input-dir data/semaglutide/plus50 ^
+@REM   --output-dir figures ^
+@REM   --effect-type log-RR ^
+@REM   --adjust bh ^
+@REM   --arm-pooling inter_intra_variance ^
+@REM   --diagnostics ^
+@REM   --exclude-outcomes "A10BJ" ^
+@REM   --exclude-groups "V"
+@REM   --verbose
 
 echo.
 echo Plus50 volcano plot complete!
 echo.
 
-python -m main.create_volcano_plot ^
-  --input-dir data/semaglutide/diab ^
-  --output-dir figures ^
-  --effect-type log-RR ^
-  --adjust bh ^
-  --arm-pooling inter_intra_variance ^
-  --diagnostics ^
-  --exclude-outcomes "A10BJ" ^
-  --exclude-groups "V"
-  --verbose
+@REM python -m main.create_volcano_plot ^
+@REM   --input-dir data/semaglutide/diab ^
+@REM   --output-dir figures ^
+@REM   --effect-type log-RR ^
+@REM   --adjust bh ^
+@REM   --arm-pooling inter_intra_variance ^
+@REM   --diagnostics ^
+@REM   --exclude-outcomes "A10BJ" ^
+@REM   --exclude-groups "V"
+@REM   --verbose
 
 echo.
 echo DIAB volcano plot complete!
@@ -66,14 +83,14 @@ echo.
 REM ============================================================================
 REM Example with filtering for Manhattan plots (uncomment and modify as needed):
 REM ============================================================================
-python -m main.create_manhattan_plot ^
-  --input-dir data/semaglutide/cvd ^
-  --method IPW ^
-  --adjust bh ^
-  --arm-pooling inter_intra_variance ^
-  --annotate-top 5 ^
-  --exclude-outcomes "A10BJ" ^
-  --exclude-groups "V"
+@REM python -m main.create_manhattan_plot ^
+@REM   --input-dir data/semaglutide/cvd ^
+@REM   --method IPW ^
+@REM   --adjust bh ^
+@REM   --arm-pooling inter_intra_variance ^
+@REM   --annotate-top 5 ^
+@REM   --exclude-outcomes "A10BJ" ^
+@REM   --exclude-groups "V"
 
 REM ============================================================================
 REM Example volcano plot with fast mode (skip extra plots, uncomment to use):
