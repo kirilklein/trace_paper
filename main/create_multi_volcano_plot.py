@@ -102,6 +102,18 @@ def main() -> None:
         help="Comma-separated mapping of dataset names to display labels (e.g., 'plus50:Main,cvd:CVD').",
     )
     parser.add_argument(
+        "--annotate-top",
+        type=int,
+        default=10,
+        help="Number of top significant outcomes to annotate per panel (tries to balance pos/neg)",
+    )
+    parser.add_argument(
+        "--annotate-fontsize",
+        type=float,
+        default=8.0,
+        help="Font size for annotated outcome labels",
+    )
+    parser.add_argument(
         "--arm-pooling",
         choices=[
             "random_effects_hksj",
@@ -126,7 +138,9 @@ def main() -> None:
     label_map = {}
     if args.subplot_labels:
         try:
-            pairs = [item.strip() for item in args.subplot_labels.split(",") if item.strip()]
+            pairs = [
+                item.strip() for item in args.subplot_labels.split(",") if item.strip()
+            ]
             for pair in pairs:
                 if ":" in pair:
                     key, value = pair.split(":", 1)
@@ -148,7 +162,7 @@ def main() -> None:
         effect_col = "RR"
         effect_label = "Risk ratio (RR)"
         null_value = 1.0
-        xscale = "log" # usually better for RR
+        xscale = "log"  # usually better for RR
         effect_alias = "RR"
     else:  # RD
         effect_col = "RD"
@@ -234,18 +248,19 @@ def main() -> None:
                 df_pooled = df_pooled.copy()
                 # If log_RR not already present from compute_rd_pvalues (it usually is for pooled)
                 if "log_RR" not in df_pooled.columns:
-                     # If p1_hat/p0_hat are available
-                     if "p1_hat" in df_pooled.columns and "p0_hat" in df_pooled.columns:
-                          df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
-                          df_pooled["log_RR"] = np.log(df_pooled["RR"])
+                    # If p1_hat/p0_hat are available
+                    if "p1_hat" in df_pooled.columns and "p0_hat" in df_pooled.columns:
+                        df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
+                        df_pooled["log_RR"] = np.log(df_pooled["RR"])
                 else:
-                     df_pooled["RR"] = np.exp(df_pooled["log_RR"])
-
+                    df_pooled["RR"] = np.exp(df_pooled["log_RR"])
 
         # Summarise per-run
         per_run_summary = (
             summarise_per_run_effects(
-                df_per_run, effect_col=effect_col if effect_col in df_per_run.columns else "RD", effect_alias=effect_alias
+                df_per_run,
+                effect_col=effect_col if effect_col in df_per_run.columns else "RD",
+                effect_alias=effect_alias,
             )
             if not df_per_run.empty
             else pd.DataFrame()
@@ -311,7 +326,7 @@ def main() -> None:
     rd_col_arg = "RD"
     if effect_col in df_combined.columns:
         rd_col_arg = effect_col
-    
+
     df_volcano = prepare_volcano_data(
         df_combined,
         rd_col=rd_col_arg,
@@ -329,7 +344,7 @@ def main() -> None:
         for c in df_combined.columns
         if c not in df_volcano.columns and c not in ["p_value", effect_alias]
     ]
-    
+
     df_final = df_volcano.merge(
         df_combined[["dataset", "outcome"] + meta_cols],
         on=["dataset", "outcome"],
@@ -351,8 +366,8 @@ def main() -> None:
 
     # If effect_col was somehow lost or not the main one, ensure it is present
     if effect_col not in df_final.columns and effect_col in df_combined.columns:
-         # This happens if prepare_volcano_data renamed it or didn't include it because we passed a different col
-         pass
+        # This happens if prepare_volcano_data renamed it or didn't include it because we passed a different col
+        pass
 
     # Save combined results
     output_csv = output_dir / f"combined_results_multi_{output_suffix}.csv"
@@ -361,7 +376,7 @@ def main() -> None:
 
     # Summary statistics
     print("\nSummary statistics:")
-    
+
     # Determine plotting order based on input arguments (not alphabetical sorting)
     input_dataset_names = [d.name for d in args.input_dirs]
     # Filter to those actually in the dataframe (handles empty results etc)
@@ -377,7 +392,7 @@ def main() -> None:
     # Custom Multi-Dataset Volcano Plot with Manhattan Coloring
     # ------------------------------------------------------------------
     print("\nCreating multi-dataset volcano plot (Manhattan style coloring)...")
-    
+
     n_panels = len(datasets)
     if n_panels == 0:
         return
@@ -385,13 +400,9 @@ def main() -> None:
     # Vertical layout: nrows=n_panels, ncols=1
     # Independent axes: sharex=False, sharey=False
     fig, axes = plt.subplots(
-        n_panels, 
-        1, 
-        figsize=(7, 5 * n_panels), 
-        sharey=False, 
-        sharex=False
+        n_panels, 1, figsize=(7, 5 * n_panels), sharey=False, sharex=False
     )
-    
+
     if n_panels == 1:
         axes = [axes]
 
@@ -399,11 +410,11 @@ def main() -> None:
     thresholds = np.array([0.05, 0.01, 0.001])
     reds = np.array(["#ffb3b3", "#bf3a3a", "#9c0202"], dtype=object)
     blues = np.array(["#b3c6ff", "#4d79ff", "#0033cc"], dtype=object)
-    neutral = "#7f7f7f" # Grey for ns
+    neutral = "#7f7f7f"  # Grey for ns
 
     for ax, ds in zip(axes, datasets):
         d = df_final[df_final["dataset"] == ds].copy()
-        
+
         # Ensure we have data
         if d.empty:
             display_title = label_map.get(ds, ds)
@@ -413,26 +424,26 @@ def main() -> None:
         # Determine colors based on q-value and effect direction
         # 1. Bin q-values
         bins = np.digitize(d["q_value"].fillna(1.0).to_numpy(), thresholds)
-        
+
         colors = []
         for effect, q, b in zip(d[effect_col], d["q_value"], bins):
             if pd.isna(q) or q > 0.05:
                 colors.append(neutral)
                 continue
-            
+
             # Significant
             idx = min(b - 1, len(reds) - 1)
             if effect > 0:
                 colors.append(reds[idx])
             else:
                 colors.append(blues[idx])
-        
+
         d["color"] = colors
-        
+
         # Scatter plot
         # Separate significant vs non-significant for z-order
         is_sig = d["q_value"] < 0.05
-        
+
         # Plot NS first (background)
         d_ns = d[~is_sig]
         if not d_ns.empty:
@@ -442,9 +453,9 @@ def main() -> None:
                 c=d_ns["color"],
                 s=20,
                 alpha=0.5,
-                label="NS"
+                label="NS",
             )
-            
+
         # Plot Sig second (foreground)
         d_sig = d[is_sig]
         if not d_sig.empty:
@@ -454,11 +465,17 @@ def main() -> None:
                 c=d_sig["color"],
                 s=25,
                 alpha=0.9,
-                label="Significant"
+                label="Significant",
             )
 
         # Reference lines
-        ax.axhline(-np.log10(DEFAULT_ALPHA), linestyle="--", linewidth=1, color="gray", alpha=0.5)
+        ax.axhline(
+            -np.log10(DEFAULT_ALPHA),
+            linestyle="--",
+            linewidth=1,
+            color="gray",
+            alpha=0.5,
+        )
         ax.axvline(null_value, linestyle="--", linewidth=1, color="gray", alpha=0.5)
 
         # Use mapped label if available
@@ -470,59 +487,124 @@ def main() -> None:
         ax.grid(alpha=0.2, linestyle=":", linewidth=0.8)
 
         if xscale:
-             ax.set_xscale(xscale)
+            ax.set_xscale(xscale)
 
-        # Annotate top hits per panel
-        max_labels = 10
-        top_hits = d.sort_values("neglog10p", ascending=False).head(max_labels)
+        # Annotate top hits per panel (balanced pos/neg)
+        n_annotate = args.annotate_top
         texts = []
-        for _, row in top_hits.iterrows():
-            label = row["outcome"]
-            # Simplified label if mapping exists
-            if pd.notna(row["atc_description"]):
-                 # Maybe use just outcome code? Or code + short desc?
-                 # Let's use outcome code for compactness in volcano
-                 label = row["outcome"]
-            
-            texts.append(
-                ax.text(
-                    row[effect_col],
-                    row["neglog10p"],
-                    label,
-                    fontsize=8,
-                    alpha=0.8
+
+        if n_annotate > 0:
+            sig_hits = d[d["q_value"] < DEFAULT_ALPHA].copy()
+            if not sig_hits.empty:
+                # Split into pos/neg
+                pos_hits = sig_hits[sig_hits[effect_col] > 0].sort_values(
+                    "neglog10p", ascending=False
                 )
-            )
-        
+                neg_hits = sig_hits[sig_hits[effect_col] < 0].sort_values(
+                    "neglog10p", ascending=False
+                )
+
+                # Determine split (approx half/half)
+                k_neg = int(np.ceil(n_annotate / 2))
+                k_pos = n_annotate - k_neg
+
+                # Rebalance if one side has too few
+                if len(neg_hits) < k_neg:
+                    k_pos += k_neg - len(neg_hits)
+                    k_neg = len(neg_hits)
+                if len(pos_hits) < k_pos:
+                    k_neg += k_pos - len(pos_hits)
+                    k_neg = min(k_neg, len(neg_hits))
+                    k_pos = len(pos_hits)
+
+                top_hits = pd.concat([neg_hits.head(k_neg), pos_hits.head(k_pos)])
+
+                for _, row in top_hits.iterrows():
+                    label = row["outcome"]
+                    if pd.notna(row["atc_description"]):
+                        label = row["outcome"]
+
+                    texts.append(
+                        ax.text(
+                            row[effect_col],
+                            row["neglog10p"],
+                            label,
+                            fontsize=args.annotate_fontsize,
+                            alpha=0.8,
+                        )
+                    )
+
         if texts:
-             adjust_text(
+            adjust_text(
                 texts,
                 ax=ax,
                 arrowprops=dict(arrowstyle="-", color="gray", alpha=0.5, lw=0.5),
-             )
+            )
 
     # Custom Legend (place on the first axes or figure level?)
     # Figure level is better for shared legend
     legend_elements = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#9c0202', markersize=8, label='Effect > 0, q ≤ 0.001'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#bf3a3a', markersize=8, label='Effect > 0, q ≤ 0.01'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ffb3b3', markersize=8, label='Effect > 0, q ≤ 0.05'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=neutral, markersize=8, label='q > 0.05'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#0033cc', markersize=8, label='Effect < 0 (Blue scale)'),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#9c0202",
+            markersize=8,
+            label="Effect > 0, q ≤ 0.001",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#bf3a3a",
+            markersize=8,
+            label="Effect > 0, q ≤ 0.01",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#ffb3b3",
+            markersize=8,
+            label="Effect > 0, q ≤ 0.05",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=neutral,
+            markersize=8,
+            label="q > 0.05",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#0033cc",
+            markersize=8,
+            label="Effect < 0 (Blue scale)",
+        ),
     ]
-    
+
     fig.legend(
         handles=legend_elements,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.05), # Bottom center
+        bbox_to_anchor=(0.5, 0.05),  # Bottom center
         ncol=2,
         title="Significance",
-        fontsize=9
+        fontsize=9,
     )
 
-    fig.suptitle(f"Volcano Plot ({args.method}) - {args.adjust} adjusted", fontsize=14, y=0.99)
+    fig.suptitle(
+        f"Volcano Plot ({args.method}) - {args.adjust} adjusted", fontsize=14, y=0.99
+    )
     # Adjust layout to accommodate bottom legend
-    fig.tight_layout(rect=[0, 0.08, 1, 0.98]) 
+    fig.tight_layout(rect=[0, 0.08, 1, 0.98])
 
     output_png = output_dir / f"volcano_plot_multi_{output_suffix}.png"
     fig.savefig(output_png, dpi=300, bbox_inches="tight")
