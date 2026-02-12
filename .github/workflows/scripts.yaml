@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set Up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -29,7 +29,7 @@ jobs:
         run: |
           echo "Testing compute_pooled_pvalues.py..."
           python -m main.compute_pooled_pvalues \
-            --input-dir data/example \
+            --input-dir example_data \
             --output-dir figures \
             --effect-type RD \
             --adjust bh \
@@ -40,7 +40,7 @@ jobs:
           echo "Validating compute_pooled_pvalues.py outputs..."
           
           # Check CSV file exists
-          OUTPUT_CSV="figures/example/bh/simple_mean/pooled_results_rd.csv"
+          OUTPUT_CSV="figures/example_data/bh/simple_mean/pooled_results_rd.csv"
           if [ ! -f "$OUTPUT_CSV" ]; then
             echo "ERROR: Expected output file not found: $OUTPUT_CSV"
             exit 1
@@ -76,7 +76,7 @@ jobs:
         run: |
           echo "Testing create_volcano_plot.py..."
           python -m main.create_volcano_plot \
-            --input-dir data/example \
+            --input-dir example_data \
             --output-dir figures \
             --effect-type RD \
             --no-diagnostics
@@ -86,7 +86,7 @@ jobs:
           echo "Validating create_volcano_plot.py outputs..."
           
           # Define expected output files
-          OUTPUT_DIR="figures/example/bh/simple_mean"
+          OUTPUT_DIR="figures/example_data/bh/simple_mean"
           PNG_FILES=(
             "$OUTPUT_DIR/volcano_plot_rd.png"
             "$OUTPUT_DIR/confusion_matrix_rd.png"
@@ -137,7 +137,7 @@ jobs:
         run: |
           echo "Validating create_manhattan_plot.py outputs..."
           
-          OUTPUT_PNG="figures/example/bh/simple_mean/manhattan_prevalence_log_rr_IPW.png"
+          OUTPUT_PNG="figures/example_data/bh/simple_mean/manhattan_prevalence_log_rr_IPW.png"
           
           # Check PNG file exists
           if [ ! -f "$OUTPUT_PNG" ]; then

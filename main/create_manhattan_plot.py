@@ -370,27 +370,21 @@ def main() -> None:
     # Significance binning and color mapping (inspired by plot_radar.ipynb)
     # ------------------------------------------------------------------
     print("\nComputing significance bins and colors...")
-    # Thresholds on q-value: standard significance levels
-    thresholds = np.array([0.05, 0.01, 0.001])
-    bins = np.digitize(df_plot["q_value"].to_numpy(), thresholds)
-
-    # Color palettes (light to dark)
-    reds = np.array(["#ffb3b3", "#bf3a3a", "#9c0202"], dtype=object)
-    blues = np.array(["#b3c6ff", "#4d79ff", "#0033cc"], dtype=object)
+    # Color palettes (light to dark = least to most significant)
+    reds = ["#ffb3b3", "#bf3a3a", "#9c0202"]
+    blues = ["#b3c6ff", "#4d79ff", "#0033cc"]
     neutral = "lightgrey"
 
     colors: List[str] = []
-    for log_rr, q, b in zip(
-        df_plot["log_RR"].to_numpy(), df_plot["q_value"].to_numpy(), bins
-    ):
+    for log_rr, q in zip(df_plot["log_RR"].to_numpy(), df_plot["q_value"].to_numpy()):
         if np.isnan(q) or q > 0.05:
             colors.append(neutral)
-            continue
-        idx = min(b - 1, len(reds) - 1)
-        if log_rr > 0:
-            colors.append(reds[idx])
+        elif q < 0.001:
+            colors.append(reds[2] if log_rr > 0 else blues[2])
+        elif q < 0.01:
+            colors.append(reds[1] if log_rr > 0 else blues[1])
         else:
-            colors.append(blues[idx])
+            colors.append(reds[0] if log_rr > 0 else blues[0])
 
     df_plot["color"] = colors
 

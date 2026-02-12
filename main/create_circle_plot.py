@@ -89,7 +89,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--arm-pooling",
         choices=[
             "random_effects_hksj",
-            "correlation_adjusted",
             "simple_mean",
             "rubins_rules",
             "inter_intra_variance",

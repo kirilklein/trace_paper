@@ -138,30 +138,19 @@ def plot_circle(
     theta = np.linspace(0, 2 * np.pi, n_outcomes, endpoint=False)
     width = (2 * np.pi / n_outcomes) * 0.9  # slight gap between bars
 
-    # Bin q-values into significance levels
-    # np.digitize with thresholds [0.05, 0.01, 0.001] gives:
-    #   bin=0 if q >= 0.05 (not significant)
-    #   bin=1 if 0.01 <= q < 0.05 (low significance)
-    #   bin=2 if 0.001 <= q < 0.01 (medium significance)
-    #   bin=3 if q < 0.001 (high significance)
-    bins = np.digitize(q_values, sig_thresholds)
-
-    # Assign colors based on significance and direction
+    # Assign colors based on significance level and effect direction
     colors_list = []
-    reds_array = np.array(reds, dtype=object)
-    blues_array = np.array(blues, dtype=object)
+    t_lo, t_mid, t_hi = sig_thresholds  # e.g. (0.05, 0.01, 0.001)
 
-    for log_rr, q, b in zip(log_rr_values, q_values, bins):
-        if np.isnan(q) or q >= sig_thresholds[0]:
-            # Not significant
+    for log_rr, q in zip(log_rr_values, q_values):
+        if np.isnan(q) or q >= t_lo:
             colors_list.append(neutral_color)
+        elif q < t_hi:
+            colors_list.append(reds[2] if log_rr > 0 else blues[2])
+        elif q < t_mid:
+            colors_list.append(reds[1] if log_rr > 0 else blues[1])
         else:
-            # Map bin to color index: bin 1,2,3 -> index 0,1,2
-            idx = min(b - 1, len(reds) - 1)
-            if log_rr > 0:
-                colors_list.append(reds_array[idx])
-            else:
-                colors_list.append(blues_array[idx])
+            colors_list.append(reds[0] if log_rr > 0 else blues[0])
 
     # Create figure with polar projection
     fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": "polar"})
