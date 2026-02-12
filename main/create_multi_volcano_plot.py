@@ -405,8 +405,7 @@ def main() -> None:
     if n_panels == 1:
         axes = [axes]
 
-    # Significance thresholds and colors
-    thresholds = np.array([0.05, 0.01, 0.001])
+    # Significance colors
     reds = np.array(["#ffb3b3", "#bf3a3a", "#9c0202"], dtype=object)
     blues = np.array(["#b3c6ff", "#4d79ff", "#0033cc"], dtype=object)
     neutral = "#7f7f7f"  # Grey for ns
