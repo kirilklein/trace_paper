@@ -614,12 +614,6 @@ def save_plotly_figure(
         # Convert trace info map to JavaScript object
         import json
 
-        # Debug: print trace info to verify all traces are stored
-        print(f"Stored trace info for {len(trace_info_map)} traces")
-        for idx, info in sorted(trace_info_map.items(), key=lambda x: int(x[0]))[:5]:
-            print(
-                f"  Trace {idx}: prefix={info['prefix']}, codes={info['codes'][:3]}..."
-            )
         trace_map_js = json.dumps(trace_info_map)
 
         filter_script = f"""

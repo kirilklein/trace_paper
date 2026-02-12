@@ -421,21 +421,16 @@ def main() -> None:
             continue
 
         # Determine colors based on q-value and effect direction
-        # 1. Bin q-values
-        bins = np.digitize(d["q_value"].fillna(1.0).to_numpy(), thresholds)
-
         colors = []
-        for effect, q, b in zip(d[effect_col], d["q_value"], bins):
+        for effect, q in zip(d[effect_col], d["q_value"]):
             if pd.isna(q) or q > 0.05:
                 colors.append(neutral)
-                continue
-
-            # Significant
-            idx = min(b - 1, len(reds) - 1)
-            if effect > 0:
-                colors.append(reds[idx])
+            elif q < 0.001:
+                colors.append(reds[2] if effect > 0 else blues[2])
+            elif q < 0.01:
+                colors.append(reds[1] if effect > 0 else blues[1])
             else:
-                colors.append(blues[idx])
+                colors.append(reds[0] if effect > 0 else blues[0])
 
         d["color"] = colors
 

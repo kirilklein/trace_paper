@@ -351,11 +351,6 @@ def _compute_logit_difference_p_value(
     ci_lo = diff_logit - crit_val * diff_se
     ci_hi = diff_logit + crit_val * diff_se
 
-    # Diagnostic: check outputs
-    print(
-        f"  Output p_value: #nan={np.isnan(p_vals).sum()}, #inf={np.isinf(p_vals).sum()}, finite={np.isfinite(p_vals).sum()}/{len(p_vals)}"
-    )
-
     # 6. Store Results
     return {
         "eta_diff": diff_logit,
@@ -446,7 +441,9 @@ def _compute_delta_method_rd_ci(
 def compute_rd_pvalues(
     df: pd.DataFrame,
     group_cols: Optional[Union[str, List[str]]] = None,
-    arm_pooling: Literal["fixed_effect", "random_effects_hksj"] = "random_effects_hksj",
+    arm_pooling: Literal[
+        "simple_mean", "rubins_rules", "random_effects_hksj", "inter_intra_variance"
+    ] = "random_effects_hksj",
     verbose: bool = False,
 ) -> pd.DataFrame:
     """
