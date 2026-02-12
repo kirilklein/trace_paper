@@ -558,3 +558,68 @@ def compute_rd_pvalues(
         pooled[k] = v
 
     return pooled
+
+
+def compute_rd_pvalues_bootstrap(
+    df: pd.DataFrame,
+    group_cols: Union[str, List[str]] = ("method", "outcome"),
+    ci_level: float = 0.95,
+) -> pd.DataFrame:
+    """
+    Bootstrap pooling for Risk Difference.
+
+    Each row is one bootstrap replicate. RD is computed directly on the
+    probability scale (no logit transform) and the SE is the between-replicate
+    standard deviation (not divided by sqrt(B)).
+
+    Returns a DataFrame with one row per group and columns compatible with
+    the existing downstream code (plotting, CSV output).
+    """
+    group_cols_list = [group_cols] if isinstance(group_cols, str) else list(group_cols)
+    alpha = 1.0 - ci_level
+
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        rd_b = g[COL_EFFECT_1].values - g[COL_EFFECT_0].values
+        B = len(rd_b)
+        theta = float(np.mean(rd_b))
+
+        if B < 2:
+            return pd.Series({
+                "RD": theta,
+                "SE_RD": np.nan,
+                "RD_CI95_lower": np.nan,
+                "RD_CI95_upper": np.nan,
+                "p1_hat": float(np.mean(g[COL_EFFECT_1].values)),
+                "p0_hat": float(np.mean(g[COL_EFFECT_0].values)),
+                "z": np.nan,
+                "p_value": np.nan,
+                "n_runs_shared": B,
+                "df_logit": np.nan,
+            })
+
+        se = float(np.std(rd_b, ddof=1))
+        df_val = B - 1
+        t_stat = theta / se if se > 0 else np.nan
+        p_value = 2.0 * (1.0 - tdist.cdf(abs(t_stat), df=df_val)) if np.isfinite(t_stat) else np.nan
+        t_crit = tdist.ppf(1 - alpha / 2, df=df_val)
+        ci_lo = theta - t_crit * se
+        ci_hi = theta + t_crit * se
+
+        return pd.Series({
+            "RD": theta,
+            "SE_RD": se,
+            "RD_CI95_lower": ci_lo,
+            "RD_CI95_upper": ci_hi,
+            "p1_hat": float(np.mean(g[COL_EFFECT_1].values)),
+            "p0_hat": float(np.mean(g[COL_EFFECT_0].values)),
+            "z": t_stat,
+            "p_value": p_value,
+            "n_runs_shared": B,
+            "df_logit": float(df_val),
+        })
+
+    return (
+        df.groupby(group_cols_list, as_index=False)
+        .apply(_agg, include_groups=False)
+        .reset_index(drop=True)
+    )
