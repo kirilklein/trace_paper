@@ -11,8 +11,9 @@ from pathlib import Path
 
 from trace.constants import METHODS_WITH_ARMS
 from trace.io import filter_methods_with_arm_cis, load_estimates
-from trace.plotting.volcano import prepare_volcano_data
+from trace.plotting.volcano import adjust_pvalues
 from trace.statistics import compute_rd_pvalues
+import numpy as np
 
 
 def main() -> None:
@@ -68,7 +69,6 @@ def main() -> None:
         "--arm-pooling",
         choices=[
             "random_effects_hksj",
-            "correlation_adjusted",
             "simple_mean",
             "rubins_rules",
             "inter_intra_variance",
@@ -77,7 +77,6 @@ def main() -> None:
         help=(
             "Arm-level pooling on the logit scale across runs: "
             "'random_effects_hksj' (DerSimonian–Laird with HKSJ SE), "
-            "'correlation_adjusted' (uses weights and rho), "
             "'simple_mean' (unweighted mean of logits; SEM uses sample std with ddof=1), "
             "'rubins_rules' (Rubin's rules for multiple imputation), "
             "'inter_intra_variance' (combines within and between variance)"
@@ -96,12 +95,6 @@ def main() -> None:
 
     # Determine effect parameters
     effect_type = args.effect_type
-    if effect_type in ["RR", "log-RR"]:
-        effect_col = "RR"
-        effect_alias = "RR"
-    else:  # RD
-        effect_col = "RD"
-        effect_alias = "RD"
 
     # Create output suffix for files
     output_suffix = effect_type.lower().replace("-", "_")
@@ -139,10 +132,11 @@ def main() -> None:
             verbose=False,
         )
 
-        # Derive pooled RR from pooled arm probabilities
+        # Use computed log_RR from pooled estimates
+        # log_RR, log_RR_CI95_lower, log_RR_CI95_upper already computed via delta method
         if not df_pooled.empty:
             df_pooled = df_pooled.copy()
-            df_pooled["RR"] = df_pooled["p1_hat"] / df_pooled["p0_hat"]
+            df_pooled["RR"] = np.exp(df_pooled["log_RR"])
 
         print(f"Computed {len(df_pooled)} method-outcome combinations")
 
@@ -178,30 +172,78 @@ def main() -> None:
                     f"max={df_pooled[col].max():.4e}"
                 )
 
-    # Apply p-value adjustment
+    # Apply p-value adjustment directly (no need for prepare_volcano_data)
     print("\nApplying p-value adjustment...")
-    df_results = prepare_volcano_data(
-        df_pooled,
-        rd_col=effect_col,
-        p_col="p_value",
-        method_col="method",
-        outcome_col="outcome",
-        adjust=args.adjust,
-        adjust_per=args.adjust_per,
-        effect_alias=effect_alias,
+    df_results = df_pooled.copy()
+
+    if args.adjust_per == "by_method":
+        q = np.empty(len(df_results), dtype=float)
+        for method in df_results["method"].unique():
+            mask = df_results["method"] == method
+            q[mask] = adjust_pvalues(
+                df_results.loc[mask, "p_value"].values, method=args.adjust
+            )
+        df_results["q_value"] = q
+    else:  # "global"
+        df_results["q_value"] = adjust_pvalues(
+            df_results["p_value"].values, method=args.adjust
+        )
+
+    # Add neglog10p for convenience
+    p_floor = 1e-20
+    df_results["neglog10p"] = -np.log10(
+        np.clip(df_results["p_value"].values, p_floor, 1.0)
     )
+
+    # Reorder columns for readability (keep all columns)
+    priority_cols = ["method", "outcome"]
+
+    # Add effect columns based on effect type
+    if effect_type in ["RR", "log-RR"]:
+        priority_cols.extend(
+            [
+                "RR",
+                "log_RR",
+                "SE_log_RR",
+                "log_RR_CI95_lower",
+                "log_RR_CI95_upper",
+                "p1_hat",
+                "p0_hat",
+            ]
+        )
+    else:  # RD
+        priority_cols.extend(
+            ["RD", "SE_RD", "RD_CI95_lower", "RD_CI95_upper", "p1_hat", "p0_hat"]
+        )
+
+    # Add statistics columns
+    priority_cols.extend(["p_value", "q_value", "neglog10p"])
+
+    # Get remaining columns not in priority list
+    remaining_cols = [c for c in df_results.columns if c not in priority_cols]
+
+    # Combine: priority columns first, then remaining
+    ordered_cols = [
+        c for c in priority_cols if c in df_results.columns
+    ] + remaining_cols
+    df_results = df_results[ordered_cols]
 
     # Save results to CSV
     output_path = output_dir / f"pooled_results_{output_suffix}.csv"
     df_results.to_csv(output_path, index=False)
     print(f"\nSaved pooled results to: {output_path}")
 
+    # Print column info
+    print(
+        f"Saved {len(df_results.columns)} columns: {', '.join(df_results.columns[:10])}{'...' if len(df_results.columns) > 10 else ''}"
+    )
+
     # Print summary statistics
     print("\n" + "=" * 80)
     print("SUMMARY")
     print("=" * 80)
     print(f"Total method-outcome combinations: {len(df_results)}")
-    print(f"\nBreakdown by method:")
+    print("\nBreakdown by method:")
     for method in sorted(df_results["method"].unique()):
         n = (df_results["method"] == method).sum()
         print(f"  {method}: {n} outcomes")
